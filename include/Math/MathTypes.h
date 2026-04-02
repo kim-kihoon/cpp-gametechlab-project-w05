@@ -14,7 +14,7 @@ namespace ExtremeMath
         XMMATRIX m;
     };
 
-    // [초격차] GPU 대역폭 25% 절감: 64바이트 -> 48바이트 압축 전송용
+    // [초격차] GPU 대역폭 25% 절감: 64바이트 -> 48바이트 압축 전송용   
     // 16바이트 정렬을 유지하면서 3x4를 보관합니다.
     struct Packed3x4Matrix
     {
