@@ -43,18 +43,15 @@ namespace ExtremeMath
                 XMVECTOR r = XMVector3Dot(aabb.Extents, planeNormalAbs);
                 XMVECTOR s = XMVector3Dot(aabb.Center, plane);
                 
-                // s.x + r.x < 0 이면 Outside (평면 뒤에 있음)
-                // s.x - r.x < 0 이면 Intersecting (평면에 걸침)
-                float d = XMVectorGetX(s);
-                float radius = XMVectorGetX(r);
-
-                if (d + radius < 0.0f)
+                // s + r < 0 이면 Outside (평면 뒤에 있음)
+                // s - r < 0 이면 Intersecting (평면에 걸침)
+                if (XMVector4Less(XMVectorAdd(s, r), XMVectorZero()))
                 {
-                    return CullingResult::Outside; // 하나라도 평면 바깥이면 완전히 바깥
+                    return CullingResult::Outside; // 완전히 바깥
                 }
-                if (d - radius < 0.0f)
+                if (XMVector4Less(XMVectorSubtract(s, r), XMVectorZero()))
                 {
-                    fullyInside = false; // 평면에 걸침
+                    fullyInside = false; // 걸침
                 }
             }
 

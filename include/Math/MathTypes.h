@@ -15,21 +15,21 @@ namespace ExtremeMath
     };
 
     // [초격차] GPU 대역폭 25% 절감: 64바이트 -> 48바이트 압축 전송용
-    // ID3D11DeviceContext::Map 시 Constant Buffer에 밀어넣을 실제 데이터 구조체.
-    // HLSL에서는 float3x4 로 받아 4x4로 조립하여 사용합니다.
+    // 16바이트 정렬을 유지하면서 3x4를 보관합니다.
     struct Packed3x4Matrix
     {
-        float m[3][4];
+        XMVECTOR Row0;
+        XMVECTOR Row1;
+        XMVECTOR Row2;
 
-        // XMMATRIX로부터 변환 (열 우선/행 우선 여부는 셰이더 설정에 따라 조정)
+        // [초격차] XMM 레지스터에서 직접 저장 (대입 오버헤드 0)
         inline void Store(CXMMATRIX mat)
         {
-            XMFLOAT4X4 temp;
-            XMStoreFloat4x4(&temp, mat);
-            // 4번째 행(0, 0, 0, 1)을 제외하고 복사 (Translation은 보통 4행에 위치하지만, HLSL 로직에 따라 트랜스포즈 필요)
-            m[0][0] = temp._11; m[0][1] = temp._12; m[0][2] = temp._13; m[0][3] = temp._14;
-            m[1][0] = temp._21; m[1][1] = temp._22; m[1][2] = temp._23; m[1][3] = temp._24;
-            m[2][0] = temp._31; m[2][1] = temp._32; m[2][2] = temp._33; m[2][3] = temp._34;
+            // 행렬을 전치(Transpose)하여 3x4 형태로 추출 (셰이더는 열 우선 기대 가능성 높음)
+            XMMATRIX t = XMMatrixTranspose(mat);
+            Row0 = t.r[0];
+            Row1 = t.r[1];
+            Row2 = t.r[2];
         }
     };
 
