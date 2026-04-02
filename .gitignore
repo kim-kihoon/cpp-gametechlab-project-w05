@@ -35,5 +35,5 @@ install_manifest.txt
 *.log
 *.tmp
 
-# VerstappenEngine 전략서 (Git 제외)
+# 에이전트 명령 파일
 GEMINI_TODO.md
