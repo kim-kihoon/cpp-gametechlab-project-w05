@@ -34,3 +34,6 @@ install_manifest.txt
 # 로그 및 임시 파일
 *.log
 *.tmp
+
+# VerstappenEngine 전략서 (Git 제외)
+GEMINI_TODO.md
