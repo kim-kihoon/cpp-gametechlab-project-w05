@@ -10,12 +10,6 @@ namespace Scene
     {
         constexpr float DEFAULT_HALF_EXTENT = 0.5f;
 
-        Math::FBox MakeDefaultBounds()
-        {
-            return Math::FBox{ { -0.5f, -0.5f, -0.5f }, { 0.5f, 0.5f, 0.5f } };
-        }
-
-        /** [성능] SOA 배열에 AABB 데이터를 효율적으로 기록 */
         void WriteBounds(FSceneDataSOA& InSceneData, uint32_t InIndex, const Math::FBox& InBounds)
         {
             InSceneData.MinX[InIndex] = InBounds.Min.x;
@@ -37,20 +31,15 @@ namespace Scene
         ResetScene();
     }
 
-    void USceneManager::Update(float DeltaTime)
-    {
-        // Culling 엔진이 RenderCount를 갱신하므로 여기선 루프를 돌지 않음
-    }
+    void USceneManager::Update(float DeltaTime) {}
 
     void USceneManager::ResetScene()
     {
         if (!SceneData) return;
-
         SceneStatistics = {};
         SceneData->ResetRenderQueue();
         SceneData->IsVisible.fill(false);
         ResetSelectionState();
-        
         if (Grid) Grid->ClearGrid();
     }
 
@@ -59,28 +48,71 @@ namespace Scene
         if (!SceneData || SceneStatistics.TotalObjectCount >= FSceneDataSOA::MAX_OBJECTS) return false;
 
         const uint32_t Index = SceneStatistics.TotalObjectCount;
-        
-        // 데이터 주입
         SceneData->WorldMatrices[Index].Store(InRequest.WorldMatrix);
         
         const DirectX::XMVECTOR Translation = InRequest.WorldMatrix.r[3];
-        Math::FBox Bounds;
         float CX = DirectX::XMVectorGetX(Translation);
         float CY = DirectX::XMVectorGetY(Translation);
         float CZ = DirectX::XMVectorGetZ(Translation);
-        Bounds.Min = { CX - DEFAULT_HALF_EXTENT, CY - DEFAULT_HALF_EXTENT, CZ - DEFAULT_HALF_EXTENT };
-        Bounds.Max = { CX + DEFAULT_HALF_EXTENT, CY + DEFAULT_HALF_EXTENT, CZ + DEFAULT_HALF_EXTENT };
         
-        WriteBounds(*SceneData, Index, Bounds);
+        SceneData->MinX[Index] = CX - DEFAULT_HALF_EXTENT;
+        SceneData->MinY[Index] = CY - DEFAULT_HALF_EXTENT;
+        SceneData->MinZ[Index] = CZ - DEFAULT_HALF_EXTENT;
+        SceneData->MaxX[Index] = CX + DEFAULT_HALF_EXTENT;
+        SceneData->MaxY[Index] = CY + DEFAULT_HALF_EXTENT;
+        SceneData->MaxZ[Index] = CZ + DEFAULT_HALF_EXTENT;
+
         SceneData->MeshIDs[Index] = InRequest.MeshID;
         SceneData->MaterialIDs[Index] = InRequest.MaterialID;
         SceneData->IsVisible[Index] = true;
 
         SceneStatistics.TotalObjectCount++;
-
         if (Grid) Grid->InsertObject(Index);
 
         return true;
+    }
+
+    void USceneManager::SpawnStaticMeshGrid(const FSceneGridSpawnRequest& InRequest)
+    {
+        if (Grid) Grid->ClearGrid();
+
+        for (uint32_t Z = 0; Z < InRequest.Depth; ++Z)
+        {
+            for (uint32_t Y = 0; Y < InRequest.Height; ++Y)
+            {
+                for (uint32_t X = 0; X < InRequest.Width; ++X)
+                {
+                    if (SceneStatistics.TotalObjectCount >= FSceneDataSOA::MAX_OBJECTS) break;
+
+                    const uint32_t Index = SceneStatistics.TotalObjectCount;
+                    float PosX = X * InRequest.Spacing;
+                    float PosY = Y * InRequest.Spacing;
+                    float PosZ = Z * InRequest.Spacing;
+                    
+                    SceneData->WorldMatrices[Index].Store(DirectX::XMMatrixTranslation(PosX, PosY, PosZ));
+                    SceneData->MinX[Index] = PosX - DEFAULT_HALF_EXTENT;
+                    SceneData->MinY[Index] = PosY - DEFAULT_HALF_EXTENT;
+                    SceneData->MinZ[Index] = PosZ - DEFAULT_HALF_EXTENT;
+                    SceneData->MaxX[Index] = PosX + DEFAULT_HALF_EXTENT;
+                    SceneData->MaxY[Index] = PosY + DEFAULT_HALF_EXTENT;
+                    SceneData->MaxZ[Index] = PosZ + DEFAULT_HALF_EXTENT;
+                    
+                    SceneData->MeshIDs[Index] = InRequest.MeshID;
+                    SceneData->MaterialIDs[Index] = InRequest.MaterialID;
+                    SceneData->IsVisible[Index] = true;
+
+                    SceneStatistics.TotalObjectCount++;
+                }
+            }
+        }
+
+        if (Grid)
+        {
+            for (uint32_t i = 0; i < SceneStatistics.TotalObjectCount; ++i)
+            {
+                Grid->InsertObject(i);
+            }
+        }
     }
 
     bool USceneManager::EnsureObjectCount(uint32_t InObjectCount)
@@ -113,24 +145,6 @@ namespace Scene
         if (Grid) Grid->InsertObject(Index);
 
         return true;
-    }
-
-    void USceneManager::SpawnStaticMeshGrid(const FSceneGridSpawnRequest& InRequest)
-    {
-        for (uint32_t Z = 0; Z < InRequest.Depth; ++Z)
-        {
-            for (uint32_t Y = 0; Y < InRequest.Height; ++Y)
-            {
-                for (uint32_t X = 0; X < InRequest.Width; ++X)
-                {
-                    FSceneSpawnRequest Req;
-                    Req.MeshID = InRequest.MeshID;
-                    Req.MaterialID = InRequest.MaterialID;
-                    Req.WorldMatrix = DirectX::XMMatrixTranslation(X * InRequest.Spacing, Y * InRequest.Spacing, Z * InRequest.Spacing);
-                    if (!SpawnStaticMesh(Req)) return;
-                }
-            }
-        }
     }
 
     bool USceneManager::SaveSceneBinary(const std::wstring& InFilePath) const
