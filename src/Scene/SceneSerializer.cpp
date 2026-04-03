@@ -51,13 +51,41 @@ namespace Scene
             return false;
         }
 
-        uint32_t Count = Header.MatrixCount;
+        const uint32_t Count = Header.MatrixCount;
+
+        InSceneManager.ResetScene();
         if (!InSceneManager.EnsureObjectCount(Count)) return false;
 
         FSceneDataSOA* SceneData = InSceneManager.GetSceneData();
         if (Count > 0 && SceneData)
         {
             File.read(reinterpret_cast<char*>(SceneData->WorldMatrices.data()), sizeof(Math::FPacked3x4Matrix) * Count);
+
+            for (uint32_t Index = 0; Index < Count; ++Index)
+            {
+                const float TX = DirectX::XMVectorGetW(SceneData->WorldMatrices[Index].Row0);
+                const float TY = DirectX::XMVectorGetW(SceneData->WorldMatrices[Index].Row1);
+                const float TZ = DirectX::XMVectorGetW(SceneData->WorldMatrices[Index].Row2);
+
+                SceneData->MinX[Index] = TX - 0.5f;
+                SceneData->MinY[Index] = TY - 0.5f;
+                SceneData->MinZ[Index] = TZ - 0.5f;
+                SceneData->MaxX[Index] = TX + 0.5f;
+                SceneData->MaxY[Index] = TY + 0.5f;
+                SceneData->MaxZ[Index] = TZ + 0.5f;
+                SceneData->MeshIDs[Index] = 0;
+                SceneData->MaterialIDs[Index] = 0;
+                SceneData->IsVisible[Index] = true;
+            }
+
+            if (UUniformGrid* Grid = InSceneManager.GetGrid())
+            {
+                Grid->ClearGrid();
+                for (uint32_t Index = 0; Index < Count; ++Index)
+                {
+                    Grid->InsertObject(Index);
+                }
+            }
         }
 
         return File.good();
