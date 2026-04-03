@@ -1,89 +1,93 @@
 #include <Scene/SceneSerializer.h>
-#include <Core/PathManager.h>
-#include <Math/MathTypes.h>
-#include <Scene/SceneData.h>
 #include <Scene/SceneManager.h>
-#include <filesystem>
+#include <Core/PathManager.h>
 #include <fstream>
 
 namespace Scene
 {
     std::wstring FSceneSerializer::GetDefaultBinaryScenePath()
     {
-        return (std::filesystem::path(ExtremeCore::FPathManager::GetBinPath()) / L"SceneMatrices.bin").wstring();
+        return Core::FPathManager::GetBinPath() + L"SceneMatrices.bin";
     }
 
     bool FSceneSerializer::SaveWorldMatrices(const USceneManager& InSceneManager, const std::wstring& InOutputPath)
     {
         const FSceneDataSOA* SceneData = InSceneManager.GetSceneData();
-        if (!SceneData)
+        if (!SceneData) return false;
+
+        // 인자가 비어있으면 기본 경로 사용
+        std::wstring FinalPath = InOutputPath.empty() ? GetDefaultBinaryScenePath() : InOutputPath;
+        
+        std::ofstream File(FinalPath, std::ios::binary);
+        if (!File) return false;
+
+        const uint32_t Count = InSceneManager.GetSceneStatistics().TotalObjectCount;
+        
+        // 헤더 정보 기록
+        FSceneBinaryHeader Header;
+        Header.MatrixCount = Count;
+        File.write(reinterpret_cast<const char*>(&Header), sizeof(Header));
+
+        if (Count > 0)
         {
-            return false;
+            File.write(reinterpret_cast<const char*>(SceneData->WorldMatrices.data()), sizeof(Math::FPacked3x4Matrix) * Count);
         }
 
-        const std::filesystem::path OutputPath = InOutputPath.empty()
-            ? std::filesystem::path(GetDefaultBinaryScenePath())
-            : std::filesystem::path(InOutputPath);
-
-        if (!OutputPath.parent_path().empty())
-        {
-            std::filesystem::create_directories(OutputPath.parent_path());
-        }
-
-        std::ofstream OutputStream(OutputPath, std::ios::binary | std::ios::trunc);
-        if (!OutputStream.is_open())
-        {
-            return false;
-        }
-
-        FSceneBinaryHeader Header = {};
-        Header.MatrixCount = InSceneManager.GetObjectCount();
-
-        OutputStream.write(reinterpret_cast<const char*>(&Header), sizeof(Header));
-        OutputStream.write(
-            reinterpret_cast<const char*>(SceneData->WorldMatrices.data()),
-            sizeof(Math::FPacked3x4Matrix) * Header.MatrixCount);
-
-        return OutputStream.good();
+        return File.good();
     }
 
     bool FSceneSerializer::LoadWorldMatrices(USceneManager& InSceneManager, const std::wstring& InInputPath)
     {
-        const std::filesystem::path InputPath = InInputPath.empty()
-            ? std::filesystem::path(GetDefaultBinaryScenePath())
-            : std::filesystem::path(InInputPath);
+        std::wstring FinalPath = InInputPath.empty() ? GetDefaultBinaryScenePath() : InInputPath;
+        
+        std::ifstream File(FinalPath, std::ios::binary);
+        if (!File) return false;
 
-        std::ifstream InputStream(InputPath, std::ios::binary);
-        if (!InputStream.is_open())
+        FSceneBinaryHeader Header;
+        File.read(reinterpret_cast<char*>(&Header), sizeof(Header));
+        
+        if (Header.Magic != FSceneBinaryHeader::MAGIC || Header.MatrixCount > FSceneDataSOA::MAX_OBJECTS)
         {
             return false;
         }
 
-        FSceneBinaryHeader Header = {};
-        InputStream.read(reinterpret_cast<char*>(&Header), sizeof(Header));
-        if (!InputStream.good() ||
-            Header.Magic != FSceneBinaryHeader::MAGIC ||
-            Header.Version != FSceneBinaryHeader::VERSION ||
-            Header.MatrixCount > FSceneDataSOA::MAX_OBJECTS)
-        {
-            return false;
-        }
+        const uint32_t Count = Header.MatrixCount;
 
-        if (!InSceneManager.EnsureObjectCount(Header.MatrixCount))
-        {
-            return false;
-        }
+        InSceneManager.ResetScene();
+        if (!InSceneManager.EnsureObjectCount(Count)) return false;
 
         FSceneDataSOA* SceneData = InSceneManager.GetSceneData();
-        if (!SceneData)
+        if (Count > 0 && SceneData)
         {
-            return false;
+            File.read(reinterpret_cast<char*>(SceneData->WorldMatrices.data()), sizeof(Math::FPacked3x4Matrix) * Count);
+
+            for (uint32_t Index = 0; Index < Count; ++Index)
+            {
+                const float TX = DirectX::XMVectorGetW(SceneData->WorldMatrices[Index].Row0);
+                const float TY = DirectX::XMVectorGetW(SceneData->WorldMatrices[Index].Row1);
+                const float TZ = DirectX::XMVectorGetW(SceneData->WorldMatrices[Index].Row2);
+
+                SceneData->MinX[Index] = TX - 0.5f;
+                SceneData->MinY[Index] = TY - 0.5f;
+                SceneData->MinZ[Index] = TZ - 0.5f;
+                SceneData->MaxX[Index] = TX + 0.5f;
+                SceneData->MaxY[Index] = TY + 0.5f;
+                SceneData->MaxZ[Index] = TZ + 0.5f;
+                SceneData->MeshIDs[Index] = 0;
+                SceneData->MaterialIDs[Index] = 0;
+                SceneData->IsVisible[Index] = true;
+            }
+
+            if (UUniformGrid* Grid = InSceneManager.GetGrid())
+            {
+                Grid->ClearGrid();
+                for (uint32_t Index = 0; Index < Count; ++Index)
+                {
+                    Grid->InsertObject(Index);
+                }
+            }
         }
 
-        InputStream.read(
-            reinterpret_cast<char*>(SceneData->WorldMatrices.data()),
-            sizeof(Math::FPacked3x4Matrix) * Header.MatrixCount);
-
-        return InputStream.good();
+        return File.good();
     }
 }
