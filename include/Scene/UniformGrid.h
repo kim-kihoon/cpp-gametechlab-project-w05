@@ -1,27 +1,21 @@
 #pragma once
 #include <vector>
+#include <array>
 #include <Math/Frustum.h>
 #include <Scene/SceneData.h>
 
 namespace Scene
 {
     /**
-     * 공간 분할 그리드의 개별 셀.
+     * [성능 극대화] 셀 내 객체 목록을 위한 선형 데이터 구조.
      */
     struct FGridCell
     {
         Math::FBox CellBox;
-        std::vector<uint32_t> ObjectIndices;
-        
-        FGridCell() 
-        {
-            ObjectIndices.reserve(200);
-        }
+        uint32_t StartIndex; // GlobalIndexBuffer 내 시작 위치
+        uint32_t Count;      // 이 셀에 포함된 객체 수
     };
 
-    /**
-     * 균등 그리드 기반 공간 분할 클래스.
-     */
     class UUniformGrid
     {
     private:
@@ -30,13 +24,21 @@ namespace Scene
         std::vector<FGridCell> Cells;
         FSceneDataSOA* SceneData;
 
+        /** [Zero-Alloc] 모든 셀의 인덱스를 통합 관리하는 거대 버퍼 */
+        static constexpr uint32_t MAX_GRID_ENTRIES = FSceneDataSOA::MAX_OBJECTS * 4;
+        std::array<uint32_t, MAX_GRID_ENTRIES> GlobalIndexBuffer;
+        uint32_t TotalEntryCount = 0;
+
     public:
         UUniformGrid(int InW, int InH, int InD, float InCellSize, FSceneDataSOA* InSceneData);
 
-        /** 객체를 적절한 그리드 셀에 삽입 */
+        /** [성능] 그리드 초기화 및 객체 재배치 준비 */
+        void ClearGrid();
+
+        /** [성능] 객체를 그리드에 삽입 (현재는 인프라 구축용으로 vector 잠시 활용 가능하나 최종은 2-pass 권장) */
         void InsertObject(uint32_t ObjectIndex);
 
-        /** Frustum 기반 Culling을 수행하고 가시 객체 목록 구축 */
+        /** [Hot Path] 최적화된 컬링 루프 */
         void CullingAndBuildRenderQueue(const Math::FFrustum& Frustum);
     };
 }
