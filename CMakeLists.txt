@@ -17,7 +17,7 @@ target_include_directories(VerstappenEngine PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/include"
 )
 
-# [초격차] 비주얼 스튜디오 빌드 플래그 (구성별 분리)
+# 비주얼 스튜디오 빌드 플래그 (구성별 분리)
 if(MSVC)
     # 공통 옵션 (디버그/릴리즈 공통)
     target_compile_definitions(VerstappenEngine PRIVATE UNICODE _UNICODE)
