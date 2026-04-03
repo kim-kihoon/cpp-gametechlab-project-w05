@@ -10,11 +10,22 @@ file(GLOB_RECURSE SOURCES
     "include/*.h"
 )
 
-add_executable(VerstappenEngine WIN32 ${SOURCES})
+set(IMGUI_SOURCES
+    "ImGui/imgui.cpp"
+    "ImGui/imgui_demo.cpp"
+    "ImGui/imgui_draw.cpp"
+    "ImGui/imgui_tables.cpp"
+    "ImGui/imgui_widgets.cpp"
+    "ImGui/imgui_impl_dx11.cpp"
+    "ImGui/imgui_impl_win32.cpp"
+)
+
+add_executable(VerstappenEngine WIN32 ${SOURCES} ${IMGUI_SOURCES})
 
 # 헤더 경로 설정
 target_include_directories(VerstappenEngine PRIVATE 
     "${CMAKE_CURRENT_SOURCE_DIR}/include"
+    "${CMAKE_CURRENT_SOURCE_DIR}/ImGui"
 )
 
 # 비주얼 스튜디오 빌드 플래그 (구성별 분리)

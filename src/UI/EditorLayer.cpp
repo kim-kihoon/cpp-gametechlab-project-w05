@@ -22,6 +22,10 @@
 #define VERSTAPPEN_WITH_IMGUI 0
 #endif
 
+#if VERSTAPPEN_WITH_IMGUI
+extern IMGUI_IMPL_API LRESULT ImGui_ImplWin32_WndProcHandler(HWND hWnd, UINT Message, WPARAM wParam, LPARAM lParam);
+#endif
+
 namespace UI
 {
     UEditorLayer::UEditorLayer()
