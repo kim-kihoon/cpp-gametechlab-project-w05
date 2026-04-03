@@ -5,46 +5,46 @@
 
 namespace Scene
 {
-	using namespace Math;
+    using namespace Math;
 
-	/**
-	 * 5만 개의 개별 메시 데이터 (SOA 방식).
-	 */
-	struct alignas(64) FSceneDataSOA
-	{
-		static constexpr uint32_t MAX_OBJECTS = 50000;
+    /**
+     * [전략 반영] 5만 개의 사과를 위한 극한의 SIMD-SoA 구조체.
+     * Culling과 Picking 루프에서 최상의 성능을 냅니다.
+     */
+    struct alignas(64) FSceneDataSOA
+    {
+        static constexpr uint32_t MAX_OBJECTS = 50000;
 
-		/** 월드 트랜스폼 행렬 배열 */
-		alignas(64) std::array<FMatrix, MAX_OBJECTS> WorldMatrices;
+        // [SIMD Hot Path] AABB를 X, Y, Z 각각의 배열로 분리하여 8개씩 한꺼번에 로드 가능하게 함
+        alignas(64) std::array<float, MAX_OBJECTS> MinX;
+        alignas(64) std::array<float, MAX_OBJECTS> MinY;
+        alignas(64) std::array<float, MAX_OBJECTS> MinZ;
+        alignas(64) std::array<float, MAX_OBJECTS> MaxX;
+        alignas(64) std::array<float, MAX_OBJECTS> MaxY;
+        alignas(64) std::array<float, MAX_OBJECTS> MaxZ;
 
-		/** 바운딩 박스 배열 (Culling 용) */
-		alignas(64) std::array<FBox, MAX_OBJECTS> BoundingBoxes;
+        // [Render Hot Path] 압축된 3x4 행렬 사용
+        alignas(64) std::array<FPacked3x4Matrix, MAX_OBJECTS> WorldMatrices;
+        
+        // Metadata
+        alignas(64) std::array<uint32_t, MAX_OBJECTS> MeshIDs;
+        alignas(64) std::array<uint32_t, MAX_OBJECTS> MaterialIDs;
+        alignas(64) std::array<bool, MAX_OBJECTS> IsVisible;
 
-		/** Static Mesh 식별자 */
-		alignas(64) std::array<uint32_t, MAX_OBJECTS> MeshIDs;
+        // Render Queue
+        alignas(64) std::array<uint32_t, MAX_OBJECTS> RenderQueue;
+        uint32_t RenderCount = 0;
 
-		/** 재질 식별자 */
-		alignas(64) std::array<uint32_t, MAX_OBJECTS> MaterialIDs;
+        void* operator new(size_t size) { return _aligned_malloc(size, 64); }
+        void operator delete(void* p) { _aligned_free(p); }
 
-		/** 가시성 결과 */
-		alignas(64) std::array<bool, MAX_OBJECTS> IsVisible;
+        FSceneDataSOA() : RenderCount(0) {
+            IsVisible.fill(false);
+        }
 
-		/** 이번 프레임에 그려질 인덱스 목록 */
-		alignas(64) std::array<uint32_t, MAX_OBJECTS> RenderQueue;
-		uint32_t RenderCount = 0;
-
-		void* operator new(size_t size) { return _aligned_malloc(size, 64); }
-		void operator delete(void* p) { _aligned_free(p); }
-
-		FSceneDataSOA() : RenderCount(0) 
-		{
-			IsVisible.fill(false);
-		}
-
-		inline void ResetRenderQueue() { RenderCount = 0; }
-		inline void AddToRenderQueue(uint32_t Index) 
-		{
-			RenderQueue[RenderCount++] = Index;
-		}
-	};
+        inline void ResetRenderQueue() { RenderCount = 0; }
+        inline void AddToRenderQueue(uint32_t Index) {
+            RenderQueue[RenderCount++] = Index;
+        }
+    };
 }

@@ -1,33 +1,24 @@
 #pragma once
 #include <DirectXMath.h>
 #include <cstdint>
-#include <vector>
 
 namespace Math
 {
     using namespace DirectX;
 
-    // 3D Vector (SIMD XMVECTOR 래핑)
     using FVector = XMVECTOR;
-    
-    // 4D Vector
     using FVector4 = XMVECTOR;
-
-    // 4x4 Matrix (SIMD XMMATRIX 래핑)
     using FMatrix = XMMATRIX;
 
     /**
-     * GPU 대역폭 절감을 위한 3x4 압축 행렬 구조체.
+     * [전략 반영] GPU 대역폭 25% 절감을 위한 3x4 압축 행렬.
      */
-    struct FPacked3x4Matrix
+    struct alignas(16) FPacked3x4Matrix
     {
         FVector Row0;
         FVector Row1;
         FVector Row2;
 
-        /**
-         * FMatrix로부터 데이터를 추출하여 압축 저장.
-         */
         inline void Store(const FMatrix& InMatrix)
         {
             FMatrix Transposed = XMMatrixTranspose(InMatrix);
@@ -38,11 +29,12 @@ namespace Math
     };
 
     /**
-     * 캐시 라인 정렬이 적용된 Bounding Box (AABB).
+     * [전략 반영] SIMD Culling에 최적화된 Min/Max 방식의 AABB.
+     * SoA 구조로 풀어서 관리하기 전, 데이터 전달용으로 사용.
      */
-    __declspec(align(16)) struct FBox
+    struct FBox
     {
-        FVector Center;
-        FVector Extents;
+        XMFLOAT3 Min;
+        XMFLOAT3 Max;
     };
 }
