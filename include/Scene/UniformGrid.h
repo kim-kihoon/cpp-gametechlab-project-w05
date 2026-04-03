@@ -21,6 +21,9 @@ namespace Scene
     private:
         int Width, Height, Depth;
         float CellSize;
+        float OriginX;
+        float OriginY;
+        float OriginZ;
         std::vector<FGridCell> Cells;
         FSceneDataSOA* SceneData;
 

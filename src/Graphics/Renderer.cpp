@@ -5,9 +5,11 @@
 #include <Scene/SceneManager.h>
 #include <DirectXMath.h>
 #include <d3dcompiler.h>
+#include <wincodec.h>
 #include <algorithm>
 #include <array>
 #include <cstdint>
+#include <cmath>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -23,6 +25,7 @@ namespace Graphics
         {
             DirectX::XMFLOAT3 Position;
             DirectX::XMFLOAT3 Normal;
+            DirectX::XMFLOAT2 TexCoord;
         };
 
         struct FPerFrameConstants
@@ -44,9 +47,10 @@ namespace Graphics
             DirectX::XMFLOAT4 BaseColor;
         };
 
-        bool ParseObjFaceIndex(const std::string& InToken, int& OutPositionIndex, int& OutNormalIndex)
+        bool ParseObjFaceIndices(const std::string& InToken, int& OutPositionIndex, int& OutTexCoordIndex, int& OutNormalIndex)
         {
             OutPositionIndex = -1;
+            OutTexCoordIndex = -1;
             OutNormalIndex = -1;
 
             const size_t FirstSlash = InToken.find('/');
@@ -58,22 +62,65 @@ namespace Graphics
 
             OutPositionIndex = std::stoi(InToken.substr(0, FirstSlash)) - 1;
 
-            const size_t LastSlash = InToken.rfind('/');
-            if (LastSlash != std::string::npos && LastSlash + 1 < InToken.size())
+            const size_t SecondSlash = InToken.find('/', FirstSlash + 1);
+            if (SecondSlash == std::string::npos)
             {
-                OutNormalIndex = std::stoi(InToken.substr(LastSlash + 1)) - 1;
+                if (FirstSlash + 1 < InToken.size())
+                {
+                    OutTexCoordIndex = std::stoi(InToken.substr(FirstSlash + 1)) - 1;
+                }
+                return OutPositionIndex >= 0;
+            }
+
+            if (SecondSlash > FirstSlash + 1)
+            {
+                OutTexCoordIndex = std::stoi(InToken.substr(FirstSlash + 1, SecondSlash - FirstSlash - 1)) - 1;
+            }
+
+            if (SecondSlash + 1 < InToken.size())
+            {
+                OutNormalIndex = std::stoi(InToken.substr(SecondSlash + 1)) - 1;
             }
 
             return OutPositionIndex >= 0;
         }
 
-        bool LoadObjMeshData(const std::wstring& InPath, std::vector<FMeshVertex>& OutVertices, std::vector<uint32_t>& OutIndices)
+        std::wstring ReadDiffuseTexturePathFromMtl(const std::filesystem::path& InMtlPath)
+        {
+            std::ifstream File(InMtlPath);
+            if (!File) return L"";
+
+            std::string Line;
+            while (std::getline(File, Line))
+            {
+                std::istringstream LineStream(Line);
+                std::string Prefix;
+                LineStream >> Prefix;
+                if (Prefix == "map_Kd")
+                {
+                    std::string TextureRelativePath;
+                    std::getline(LineStream >> std::ws, TextureRelativePath);
+                    if (TextureRelativePath.empty()) return L"";
+                    return (InMtlPath.parent_path() / std::filesystem::path(TextureRelativePath)).lexically_normal().wstring();
+                }
+            }
+
+            return L"";
+        }
+
+        bool LoadObjMeshData(
+            const std::wstring& InPath,
+            std::vector<FMeshVertex>& OutVertices,
+            std::vector<uint32_t>& OutIndices,
+            std::wstring& OutDiffuseTexturePath)
         {
             std::ifstream File{ std::filesystem::path(InPath) };
             if (!File) return false;
 
             std::vector<DirectX::XMFLOAT3> Positions;
             std::vector<DirectX::XMFLOAT3> Normals;
+            std::vector<DirectX::XMFLOAT2> TexCoords;
+            std::filesystem::path MaterialLibraryPath;
             std::string Line;
 
             while (std::getline(File, Line))
@@ -84,11 +131,27 @@ namespace Graphics
                 std::string Prefix;
                 LineStream >> Prefix;
 
-                if (Prefix == "v")
+                if (Prefix == "mtllib")
+                {
+                    std::string RelativeMaterialPath;
+                    std::getline(LineStream >> std::ws, RelativeMaterialPath);
+                    if (!RelativeMaterialPath.empty())
+                    {
+                        MaterialLibraryPath = std::filesystem::path(InPath).parent_path() / std::filesystem::path(RelativeMaterialPath);
+                    }
+                }
+                else if (Prefix == "v")
                 {
                     DirectX::XMFLOAT3 Position = {};
                     LineStream >> Position.x >> Position.y >> Position.z;
                     Positions.push_back(Position);
+                }
+                else if (Prefix == "vt")
+                {
+                    DirectX::XMFLOAT2 TexCoord = {};
+                    LineStream >> TexCoord.x >> TexCoord.y;
+                    TexCoord.y = 1.0f - TexCoord.y;
+                    TexCoords.push_back(TexCoord);
                 }
                 else if (Prefix == "vn")
                 {
@@ -98,32 +161,154 @@ namespace Graphics
                 }
                 else if (Prefix == "f")
                 {
-                    std::array<std::string, 3> Tokens = {};
-                    if (!(LineStream >> Tokens[0] >> Tokens[1] >> Tokens[2]))
+                    std::vector<std::string> Tokens;
+                    std::string Token;
+                    while (LineStream >> Token)
+                    {
+                        Tokens.push_back(Token);
+                    }
+
+                    if (Tokens.size() < 3)
                     {
                         continue;
                     }
 
-                    for (const std::string& Token : Tokens)
+                    for (size_t TriangleIndex = 1; TriangleIndex + 1 < Tokens.size(); ++TriangleIndex)
                     {
-                        int PositionIndex = -1;
-                        int NormalIndex = -1;
-                        if (!ParseObjFaceIndex(Token, PositionIndex, NormalIndex)) continue;
-                        if (PositionIndex < 0 || static_cast<size_t>(PositionIndex) >= Positions.size()) continue;
+                        const std::array<std::string, 3> TriangleTokens = { Tokens[0], Tokens[TriangleIndex], Tokens[TriangleIndex + 1] };
 
-                        FMeshVertex Vertex = {};
-                        Vertex.Position = Positions[PositionIndex];
-                        Vertex.Normal = (NormalIndex >= 0 && static_cast<size_t>(NormalIndex) < Normals.size())
-                            ? Normals[NormalIndex]
-                            : DirectX::XMFLOAT3{ 0.0f, 0.0f, 1.0f };
+                        for (const std::string& FaceToken : TriangleTokens)
+                        {
+                            int PositionIndex = -1;
+                            int TexCoordIndex = -1;
+                            int NormalIndex = -1;
+                            if (!ParseObjFaceIndices(FaceToken, PositionIndex, TexCoordIndex, NormalIndex)) continue;
+                            if (PositionIndex < 0 || static_cast<size_t>(PositionIndex) >= Positions.size()) continue;
 
-                        OutVertices.push_back(Vertex);
-                        OutIndices.push_back(static_cast<uint32_t>(OutIndices.size()));
+                            FMeshVertex Vertex = {};
+                            Vertex.Position = Positions[PositionIndex];
+                            Vertex.Normal = (NormalIndex >= 0 && static_cast<size_t>(NormalIndex) < Normals.size())
+                                ? Normals[NormalIndex]
+                                : DirectX::XMFLOAT3{ 0.0f, 0.0f, 1.0f };
+                            Vertex.TexCoord = (TexCoordIndex >= 0 && static_cast<size_t>(TexCoordIndex) < TexCoords.size())
+                                ? TexCoords[TexCoordIndex]
+                                : DirectX::XMFLOAT2{ 0.0f, 0.0f };
+
+                            OutVertices.push_back(Vertex);
+                            OutIndices.push_back(static_cast<uint32_t>(OutIndices.size()));
+                        }
                     }
                 }
             }
 
+            if (!MaterialLibraryPath.empty())
+            {
+                OutDiffuseTexturePath = ReadDiffuseTexturePathFromMtl(MaterialLibraryPath);
+            }
+
             return !OutVertices.empty() && !OutIndices.empty();
+        }
+
+        bool CreateSolidTexture(
+            ID3D11Device* InDevice,
+            const DirectX::XMFLOAT4& InColor,
+            Microsoft::WRL::ComPtr<ID3D11ShaderResourceView>& OutTextureView)
+        {
+            const uint8_t PixelData[4] = {
+                static_cast<uint8_t>(InColor.x * 255.0f),
+                static_cast<uint8_t>(InColor.y * 255.0f),
+                static_cast<uint8_t>(InColor.z * 255.0f),
+                static_cast<uint8_t>(InColor.w * 255.0f)
+            };
+
+            D3D11_TEXTURE2D_DESC TextureDesc = {};
+            TextureDesc.Width = 1;
+            TextureDesc.Height = 1;
+            TextureDesc.MipLevels = 1;
+            TextureDesc.ArraySize = 1;
+            TextureDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+            TextureDesc.SampleDesc.Count = 1;
+            TextureDesc.Usage = D3D11_USAGE_DEFAULT;
+            TextureDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+
+            D3D11_SUBRESOURCE_DATA InitialData = {};
+            InitialData.pSysMem = PixelData;
+            InitialData.SysMemPitch = sizeof(PixelData);
+
+            Microsoft::WRL::ComPtr<ID3D11Texture2D> Texture;
+            if (FAILED(InDevice->CreateTexture2D(&TextureDesc, &InitialData, &Texture))) return false;
+            return SUCCEEDED(InDevice->CreateShaderResourceView(Texture.Get(), nullptr, &OutTextureView));
+        }
+
+        bool LoadTextureWithWIC(
+            ID3D11Device* InDevice,
+            const std::wstring& InTexturePath,
+            Microsoft::WRL::ComPtr<ID3D11ShaderResourceView>& OutTextureView)
+        {
+            Microsoft::WRL::ComPtr<IWICImagingFactory> ImagingFactory;
+            if (FAILED(::CoCreateInstance(
+                CLSID_WICImagingFactory,
+                nullptr,
+                CLSCTX_INPROC_SERVER,
+                IID_PPV_ARGS(&ImagingFactory))))
+            {
+                return false;
+            }
+
+            Microsoft::WRL::ComPtr<IWICBitmapDecoder> Decoder;
+            if (FAILED(ImagingFactory->CreateDecoderFromFilename(
+                InTexturePath.c_str(),
+                nullptr,
+                GENERIC_READ,
+                WICDecodeMetadataCacheOnLoad,
+                &Decoder)))
+            {
+                return false;
+            }
+
+            Microsoft::WRL::ComPtr<IWICBitmapFrameDecode> Frame;
+            if (FAILED(Decoder->GetFrame(0, &Frame))) return false;
+
+            Microsoft::WRL::ComPtr<IWICFormatConverter> FormatConverter;
+            if (FAILED(ImagingFactory->CreateFormatConverter(&FormatConverter))) return false;
+            if (FAILED(FormatConverter->Initialize(
+                Frame.Get(),
+                GUID_WICPixelFormat32bppRGBA,
+                WICBitmapDitherTypeNone,
+                nullptr,
+                0.0f,
+                WICBitmapPaletteTypeCustom)))
+            {
+                return false;
+            }
+
+            UINT Width = 0;
+            UINT Height = 0;
+            if (FAILED(FormatConverter->GetSize(&Width, &Height)) || Width == 0 || Height == 0) return false;
+
+            std::vector<uint8_t> Pixels(static_cast<size_t>(Width) * static_cast<size_t>(Height) * 4u);
+            if (FAILED(FormatConverter->CopyPixels(nullptr, Width * 4u, static_cast<UINT>(Pixels.size()), Pixels.data())))
+            {
+                return false;
+            }
+
+            D3D11_TEXTURE2D_DESC TextureDesc = {};
+            TextureDesc.Width = Width;
+            TextureDesc.Height = Height;
+            TextureDesc.MipLevels = 1;
+            TextureDesc.ArraySize = 1;
+            TextureDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+            TextureDesc.SampleDesc.Count = 1;
+            TextureDesc.Usage = D3D11_USAGE_DEFAULT;
+            TextureDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+
+            D3D11_SUBRESOURCE_DATA InitialData = {};
+            InitialData.pSysMem = Pixels.data();
+            InitialData.SysMemPitch = Width * 4u;
+
+            Microsoft::WRL::ComPtr<ID3D11Texture2D> Texture;
+            if (FAILED(InDevice->CreateTexture2D(&TextureDesc, &InitialData, &Texture))) return false;
+            return SUCCEEDED(InDevice->CreateShaderResourceView(Texture.Get(), nullptr, &OutTextureView));
         }
 
         bool CreateMeshBuffers(
@@ -133,7 +318,8 @@ namespace Graphics
         {
             std::vector<FMeshVertex> Vertices;
             std::vector<uint32_t> Indices;
-            if (!LoadObjMeshData(InPath, Vertices, Indices))
+            std::wstring DiffuseTexturePath;
+            if (!LoadObjMeshData(InPath, Vertices, Indices, DiffuseTexturePath))
             {
                 return false;
             }
@@ -151,6 +337,11 @@ namespace Graphics
             IndexBufferDesc.BindFlags = D3D11_BIND_INDEX_BUFFER;
             D3D11_SUBRESOURCE_DATA IndexData = { Indices.data(), 0, 0 };
             if (FAILED(InDevice->CreateBuffer(&IndexBufferDesc, &IndexData, &OutMeshResource.IndexBuffer))) return false;
+
+            if (!DiffuseTexturePath.empty() && !LoadTextureWithWIC(InDevice, DiffuseTexturePath, OutMeshResource.DiffuseTextureView))
+            {
+                return false;
+            }
 
             OutMeshResource.IndexCount = static_cast<uint32_t>(Indices.size());
             return true;
@@ -241,16 +432,21 @@ namespace Graphics
                 float4 BaseColor;
             };
 
+            Texture2D DiffuseTexture : register(t0);
+            SamplerState DiffuseSampler : register(s0);
+
             struct VS_IN
             {
                 float3 Pos : POSITION;
                 float3 Norm : NORMAL;
+                float2 TexCoord : TEXCOORD0;
             };
 
             struct PS_IN
             {
                 float4 Pos : SV_POSITION;
                 float3 Norm : NORMAL;
+                float2 TexCoord : TEXCOORD0;
             };
 
             PS_IN VSMain(VS_IN i)
@@ -271,6 +467,7 @@ namespace Graphics
 
                 o.Pos = mul(float4(WorldPos, 1.0f), ViewProj);
                 o.Norm = WorldNorm;
+                o.TexCoord = i.TexCoord;
                 return o;
             }
 
@@ -279,7 +476,8 @@ namespace Graphics
                 float3 N = normalize(i.Norm);
                 float3 L = normalize(-LightDirection.xyz);
                 float Diffuse = saturate(dot(N, L)) * 0.75f + 0.25f;
-                return float4(BaseColor.rgb * Diffuse, BaseColor.a);
+                float4 Albedo = DiffuseTexture.Sample(DiffuseSampler, i.TexCoord);
+                return float4(Albedo.rgb * BaseColor.rgb * Diffuse, Albedo.a * BaseColor.a);
             }
         )";
 
@@ -295,6 +493,7 @@ namespace Graphics
         D3D11_INPUT_ELEMENT_DESC Layout[] = {
             { "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0 },
             { "NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D11_INPUT_PER_VERTEX_DATA, 0 },
+            { "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 24, D3D11_INPUT_PER_VERTEX_DATA, 0 },
         };
         if (FAILED(Device->CreateInputLayout(Layout, static_cast<UINT>(std::size(Layout)), VS->GetBufferPointer(), VS->GetBufferSize(), &InputLayout)))
         {
@@ -322,9 +521,24 @@ namespace Graphics
         MaterialDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
         if (FAILED(Device->CreateBuffer(&MaterialDesc, nullptr, &MaterialBuffer))) return false;
 
+        D3D11_SAMPLER_DESC SamplerDesc = {};
+        SamplerDesc.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
+        SamplerDesc.AddressU = D3D11_TEXTURE_ADDRESS_WRAP;
+        SamplerDesc.AddressV = D3D11_TEXTURE_ADDRESS_WRAP;
+        SamplerDesc.AddressW = D3D11_TEXTURE_ADDRESS_WRAP;
+        SamplerDesc.ComparisonFunc = D3D11_COMPARISON_NEVER;
+        SamplerDesc.MinLOD = 0.0f;
+        SamplerDesc.MaxLOD = D3D11_FLOAT32_MAX;
+        if (FAILED(Device->CreateSamplerState(&SamplerDesc, &DiffuseSamplerState))) return false;
+
+        if (!CreateSolidTexture(Device.Get(), { 1.0f, 1.0f, 1.0f, 1.0f }, DefaultWhiteTextureView)) return false;
+
         const std::wstring MeshBasePath = Core::FPathManager::GetMeshPath();
         if (!CreateMeshBuffers(Device.Get(), MeshBasePath + L"apple_mid.obj", MeshResources[0])) return false;
         if (!CreateMeshBuffers(Device.Get(), MeshBasePath + L"bitten_apple_mid.obj", MeshResources[1])) return false;
+
+        if (!MeshResources[0].DiffuseTextureView) MeshResources[0].DiffuseTextureView = DefaultWhiteTextureView;
+        if (!MeshResources[1].DiffuseTextureView) MeshResources[1].DiffuseTextureView = DefaultWhiteTextureView;
 
         return true;
     }
@@ -349,7 +563,7 @@ namespace Graphics
         const Scene::FSceneDataSOA* SceneData = InSceneManager.GetSceneData();
         if (!SceneData || !PerFrameBuffer || !PerObjectBuffer || !MaterialBuffer) return;
 
-        const uint32_t SourceCount = (SceneData->RenderCount > 0) ? SceneData->RenderCount : InSceneManager.GetSceneStatistics().TotalObjectCount;
+        const uint32_t SourceCount = SceneData->RenderCount;
         if (SourceCount == 0) return;
 
         thread_local std::array<std::vector<uint32_t>, MAX_MESH_TYPES> Buckets;
@@ -361,18 +575,33 @@ namespace Graphics
 
         for (uint32_t RenderIndex = 0; RenderIndex < SourceCount; ++RenderIndex)
         {
-            const uint32_t ObjectIndex = (SceneData->RenderCount > 0) ? SceneData->RenderQueue[RenderIndex] : RenderIndex;
+            const uint32_t ObjectIndex = SceneData->RenderQueue[RenderIndex];
             const uint32_t MeshID = SceneData->MeshIDs[ObjectIndex];
             if (MeshID >= MAX_MESH_TYPES) continue;
             Buckets[MeshID].push_back(ObjectIndex);
         }
 
         const float AspectRatio = (ViewportHeight == 0) ? 1.0f : static_cast<float>(ViewportWidth) / static_cast<float>(ViewportHeight);
-        const DirectX::XMMATRIX View = DirectX::XMMatrixLookAtLH(
-            DirectX::XMVectorSet(-60.0f, -60.0f, 45.0f, 1.0f),
-            DirectX::XMVectorSet(0.0f, 0.0f, 5.0f, 1.0f),
-            DirectX::XMVectorSet(0.0f, 0.0f, 1.0f, 0.0f));
-        const DirectX::XMMATRIX Projection = DirectX::XMMatrixPerspectiveFovLH(DirectX::XMConvertToRadians(60.0f), AspectRatio, 0.1f, 500.0f);
+        const float CosPitch = std::cos(CameraState.PitchRadians);
+        const float SinPitch = std::sin(CameraState.PitchRadians);
+        const float CosYaw = std::cos(CameraState.YawRadians);
+        const float SinYaw = std::sin(CameraState.YawRadians);
+
+        DirectX::XMVECTOR CameraPosition = DirectX::XMLoadFloat3(&CameraState.Position);
+        DirectX::XMVECTOR Forward = DirectX::XMVector3Normalize(DirectX::XMVectorSet(
+            CosPitch * CosYaw,
+            CosPitch * SinYaw,
+            SinPitch,
+            0.0f));
+        DirectX::XMVECTOR WorldUp = DirectX::XMVectorSet(0.0f, 0.0f, 1.0f, 0.0f);
+        DirectX::XMVECTOR CameraTarget = DirectX::XMVectorAdd(CameraPosition, Forward);
+
+        const DirectX::XMMATRIX View = DirectX::XMMatrixLookAtLH(CameraPosition, CameraTarget, WorldUp);
+        const DirectX::XMMATRIX Projection = DirectX::XMMatrixPerspectiveFovLH(
+            DirectX::XMConvertToRadians(CameraState.FOVDegrees),
+            AspectRatio,
+            CameraState.NearClip,
+            CameraState.FarClip);
         const DirectX::XMMATRIX ViewProj = View * Projection;
 
         D3D11_MAPPED_SUBRESOURCE PerFrameMap = {};
@@ -409,11 +638,7 @@ namespace Graphics
         Context->PSSetShader(PixelShader.Get(), nullptr, 0);
         Context->VSSetConstantBuffers(0, 1, PerFrameBuffer.GetAddressOf());
         Context->PSSetConstantBuffers(0, 1, PerFrameBuffer.GetAddressOf());
-
-        const std::array<DirectX::XMFLOAT4, MAX_MESH_TYPES> MeshColors = {
-            DirectX::XMFLOAT4{ 0.84f, 0.15f, 0.10f, 1.0f },
-            DirectX::XMFLOAT4{ 0.98f, 0.72f, 0.30f, 1.0f }
-        };
+        Context->PSSetSamplers(0, 1, DiffuseSamplerState.GetAddressOf());
 
         for (uint32_t MeshID = 0; MeshID < MAX_MESH_TYPES; ++MeshID)
         {
@@ -424,10 +649,13 @@ namespace Graphics
             D3D11_MAPPED_SUBRESOURCE MaterialMap = {};
             if (FAILED(Context->Map(MaterialBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &MaterialMap))) continue;
             FMaterialConstants MaterialConstants = {};
-            MaterialConstants.BaseColor = MeshColors[MeshID];
+            MaterialConstants.BaseColor = { 1.0f, 1.0f, 1.0f, 1.0f };
             std::memcpy(MaterialMap.pData, &MaterialConstants, sizeof(MaterialConstants));
             Context->Unmap(MaterialBuffer.Get(), 0);
             Context->PSSetConstantBuffers(2, 1, MaterialBuffer.GetAddressOf());
+
+            ID3D11ShaderResourceView* TextureView = MeshResource.DiffuseTextureView ? MeshResource.DiffuseTextureView.Get() : DefaultWhiteTextureView.Get();
+            Context->PSSetShaderResources(0, 1, &TextureView);
 
             UINT Stride = sizeof(FMeshVertex);
             UINT Offset = 0;

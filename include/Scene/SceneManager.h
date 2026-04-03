@@ -49,6 +49,7 @@ namespace Scene
         const UUniformGrid* GetGrid() const { return Grid.get(); }
         const FSceneStatistics& GetSceneStatistics() const { return SceneStatistics; }
         const FSceneSelectionData& GetSelectionData() const { return SelectionData; }
+        void SetVisibleObjectCount(uint32_t InVisibleObjectCount) { SceneStatistics.VisibleObjectCount = InVisibleObjectCount; }
 
         uint32_t GetObjectCount() const { return SceneStatistics.TotalObjectCount; }
         static constexpr uint32_t GetMaxObjectCount() { return FSceneDataSOA::MAX_OBJECTS; }

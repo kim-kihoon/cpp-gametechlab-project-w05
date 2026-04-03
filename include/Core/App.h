@@ -1,6 +1,8 @@
 #pragma once
 #include <Core/AppTypes.h>
+#include <Graphics/RendererTypes.h>
 #include <windows.h>
+#include <objbase.h>
 #include <memory>
 #include <string>
 
@@ -25,6 +27,7 @@ private:
     void Update(float DeltaTime);
     void Render();
     void UpdateFramePerformanceMetrics(float InDeltaTime);
+    void UpdateCamera(float InDeltaTime);
 
 private:
     HWND WindowHandle;
@@ -38,5 +41,10 @@ private:
     std::unique_ptr<UI::UEditorLayer> EditorLayer;
 
     float DeltaTime = 0.0f;
+    Graphics::FCameraState CameraState;
+    float PendingWheelDelta = 0.0f;
+    bool bIsRightMouseLooking = false;
+    POINT LastMousePosition = {};
+    bool bIsCOMInitialized = false;
     Core::FFramePerformanceMetrics FramePerformanceMetrics;
 };

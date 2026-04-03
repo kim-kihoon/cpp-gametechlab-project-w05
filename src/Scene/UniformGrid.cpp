@@ -5,6 +5,9 @@ namespace Scene
 {
     UUniformGrid::UUniformGrid(int InW, int InH, int InD, float InCellSize, FSceneDataSOA* InSceneData)
         : Width(InW), Height(InH), Depth(InD), CellSize(InCellSize), SceneData(InSceneData)
+        , OriginX(-(static_cast<float>(InW) * InCellSize) * 0.5f)
+        , OriginY(-(static_cast<float>(InH) * InCellSize) * 0.5f)
+        , OriginZ(0.0f)
         , TotalEntryCount(0)
     {
         Cells.resize(Width * Height * Depth);
@@ -28,8 +31,8 @@ namespace Scene
                 for (int x = 0; x < Width; ++x)
                 {
                     int Index = x + (y * Width) + (z * Width * Height);
-                    Cells[Index].CellBox.Min = { x * CellSize, y * CellSize, z * CellSize };
-                    Cells[Index].CellBox.Max = { (x + 1) * CellSize, (y + 1) * CellSize, (z + 1) * CellSize };
+                    Cells[Index].CellBox.Min = { OriginX + (x * CellSize), OriginY + (y * CellSize), OriginZ + (z * CellSize) };
+                    Cells[Index].CellBox.Max = { OriginX + ((x + 1) * CellSize), OriginY + ((y + 1) * CellSize), OriginZ + ((z + 1) * CellSize) };
                 }
             }
         }
@@ -51,9 +54,9 @@ namespace Scene
         float CY = (OYMin + OYMax) * 0.5f;
         float CZ = (OZMin + OZMax) * 0.5f;
 
-        int GX = std::clamp(static_cast<int>(CX / CellSize), 0, Width - 1);
-        int GY = std::clamp(static_cast<int>(CY / CellSize), 0, Height - 1);
-        int GZ = std::clamp(static_cast<int>(CZ / CellSize), 0, Depth - 1);
+        int GX = std::clamp(static_cast<int>((CX - OriginX) / CellSize), 0, Width - 1);
+        int GY = std::clamp(static_cast<int>((CY - OriginY) / CellSize), 0, Height - 1);
+        int GZ = std::clamp(static_cast<int>((CZ - OriginZ) / CellSize), 0, Depth - 1);
 
         int CellIndex = GX + (GY * Width) + (GZ * Width * Height);
         FGridCell& Cell = Cells[CellIndex];

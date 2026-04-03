@@ -21,6 +21,16 @@ namespace Scene
             return std::sscanf(Values.c_str(), "%f, %f, %f", &OutX, &OutY, &OutZ) == 3;
         }
 
+        bool ParseSingle(const std::string& InLine, float& OutValue)
+        {
+            const size_t OpenBracket = InLine.find('[');
+            const size_t CloseBracket = InLine.find(']', OpenBracket);
+            if (OpenBracket == std::string::npos || CloseBracket == std::string::npos) return false;
+
+            const std::string Value = InLine.substr(OpenBracket + 1, CloseBracket - OpenBracket - 1);
+            return std::sscanf(Value.c_str(), "%f", &OutValue) == 1;
+        }
+
         uint32_t DetermineMeshID(const std::string& InAssetPath)
         {
             return (InAssetPath.find("bitten_apple_mid.obj") != std::string::npos) ? 1u : 0u;
@@ -50,7 +60,7 @@ namespace Scene
         return true;
     }
 
-    bool FAssetLoader::LoadDefaultScene(USceneManager& InSceneManager, const std::wstring& InScenePath)
+    bool FAssetLoader::LoadDefaultScene(USceneManager& InSceneManager, Graphics::FCameraState* OutCameraState, const std::wstring& InScenePath)
     {
         const std::wstring FinalPath = InScenePath.empty() ? (Core::FPathManager::GetScenePath() + L"Default.scene") : InScenePath;
         std::ifstream File{ std::filesystem::path(FinalPath) };
@@ -65,10 +75,40 @@ namespace Scene
         float LocationY = 0.0f;
         float LocationZ = 0.0f;
         uint32_t MeshID = 0;
+        bool bInsideCamera = false;
 
         while (std::getline(File, Line))
         {
-            if (Line.find("\"Location\"") != std::string::npos)
+            if (Line.find("\"PerspectiveCamera\"") != std::string::npos)
+            {
+                bInsideCamera = true;
+            }
+            else if (bInsideCamera && OutCameraState && Line.find("\"Location\"") != std::string::npos)
+            {
+                ParseTriple(Line, OutCameraState->Position.x, OutCameraState->Position.y, OutCameraState->Position.z);
+            }
+            else if (bInsideCamera && OutCameraState && Line.find("\"Rotation\"") != std::string::npos)
+            {
+                float RollRadians = 0.0f;
+                ParseTriple(Line, RollRadians, OutCameraState->YawRadians, OutCameraState->PitchRadians);
+            }
+            else if (bInsideCamera && OutCameraState && Line.find("\"FOV\"") != std::string::npos)
+            {
+                ParseSingle(Line, OutCameraState->FOVDegrees);
+            }
+            else if (bInsideCamera && OutCameraState && Line.find("\"NearClip\"") != std::string::npos)
+            {
+                ParseSingle(Line, OutCameraState->NearClip);
+            }
+            else if (bInsideCamera && OutCameraState && Line.find("\"FarClip\"") != std::string::npos)
+            {
+                ParseSingle(Line, OutCameraState->FarClip);
+            }
+            else if (bInsideCamera && Line.find("},") != std::string::npos)
+            {
+                bInsideCamera = false;
+            }
+            else if (Line.find("\"Location\"") != std::string::npos)
             {
                 bHasLocation = ParseTriple(Line, LocationX, LocationY, LocationZ);
             }

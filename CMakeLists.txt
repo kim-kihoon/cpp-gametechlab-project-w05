@@ -57,4 +57,5 @@ target_link_libraries(VerstappenEngine PRIVATE
     d3d11.lib
     dxgi.lib
     d3dcompiler.lib
+    windowscodecs.lib
 )
