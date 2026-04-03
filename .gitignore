@@ -22,7 +22,6 @@ install_manifest.txt
 # 컴파일 결과물
 *.exe
 *.pdb
-*.obj
 *.lib
 *.dll
 
