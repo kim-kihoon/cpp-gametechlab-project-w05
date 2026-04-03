@@ -1,6 +1,11 @@
 #pragma once
-#include <windows.h>
+#include <array>
+#include <cstdint>
 #include <d3d11.h>
+#include <string>
+#include <windows.h>
+
+namespace Scene { class USceneManager; }
 
 namespace UI
 {
@@ -17,11 +22,24 @@ namespace UI
         void Update(float DeltaTime);
         void Draw();
         void Cleanup();
+        void SetSceneManager(Scene::USceneManager* InSceneManager);
+        bool HandleWindowMessage(HWND hWnd, UINT Message, WPARAM wParam, LPARAM lParam);
+        uint32_t GetSelectedObjectIndex() const { return SelectedObjectIndex; }
 
     private:
         void DrawControlPanel();
         void DrawSceneManager();
         void DrawPropertyWindow();
         void DrawConsole();
+
+    private:
+        HWND WindowHandle = nullptr;
+        ID3D11Device* Device = nullptr;
+        ID3D11DeviceContext* Context = nullptr;
+        Scene::USceneManager* SceneManager = nullptr;
+        uint32_t SelectedObjectIndex = UINT32_MAX;
+        bool bIsInitialized = false;
+        std::array<char, 128> BinaryFileName = {};
+        std::string StatusMessage;
     };
 }

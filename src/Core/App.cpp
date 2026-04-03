@@ -15,7 +15,13 @@ UApp::UApp()
     EditorLayer = std::make_unique<UI::UEditorLayer>();
 }
 
-UApp::~UApp() {}
+UApp::~UApp()
+{
+    if (EditorLayer)
+    {
+        EditorLayer->Cleanup();
+    }
+}
 
 bool UApp::Initialize(HINSTANCE InHInstance, int InCmdShow)
 {
@@ -48,12 +54,14 @@ bool UApp::Initialize(HINSTANCE InHInstance, int InCmdShow)
 
     if (!WindowHandle) return false;
 
+    ::SetWindowLongPtrW(WindowHandle, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(this));
     ::ShowWindow(WindowHandle, InCmdShow);
     ::UpdateWindow(WindowHandle);
 
     if (!Renderer->Initialize(WindowHandle, ScreenWidth, ScreenHeight)) return false;
     SceneManager->Initialize();
-    
+    EditorLayer->SetSceneManager(SceneManager.get());
+
     if (!EditorLayer->Initialize(WindowHandle, Renderer->GetDevice(), Renderer->GetContext())) return false;
 
     return true;
@@ -100,6 +108,18 @@ void UApp::Render()
 
 LRESULT CALLBACK UApp::WindowProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 {
+    if (message == WM_NCCREATE)
+    {
+        const CREATESTRUCTW* CreateStruct = reinterpret_cast<const CREATESTRUCTW*>(lParam);
+        ::SetWindowLongPtrW(hWnd, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(CreateStruct->lpCreateParams));
+    }
+
+    UApp* AppInstance = reinterpret_cast<UApp*>(::GetWindowLongPtrW(hWnd, GWLP_USERDATA));
+    if (AppInstance != nullptr && AppInstance->EditorLayer != nullptr && AppInstance->EditorLayer->HandleWindowMessage(hWnd, message, wParam, lParam))
+    {
+        return 1;
+    }
+
     switch (message)
     {
     case WM_DESTROY:
