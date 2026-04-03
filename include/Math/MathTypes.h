@@ -3,40 +3,46 @@
 #include <cstdint>
 #include <vector>
 
-namespace ExtremeMath
+namespace Math
 {
     using namespace DirectX;
 
-    // SIMD 레지스터(XMM)에 바로 올릴 수 있는 16-Byte Aligned Matrix.
-    // 연산용으로만 사용하고, GPU로 전송할 때는 Packed3x4Matrix로 변환합니다.
-    __declspec(align(16)) struct AlignedMatrix
-    {
-        XMMATRIX m;
-    };
+    // 3D Vector (SIMD XMVECTOR 래핑)
+    using FVector = XMVECTOR;
+    
+    // 4D Vector
+    using FVector4 = XMVECTOR;
 
-    // [초격차] GPU 대역폭 25% 절감: 64바이트 -> 48바이트 압축 전송용   
-    // 16바이트 정렬을 유지하면서 3x4를 보관합니다.
-    struct Packed3x4Matrix
-    {
-        XMVECTOR Row0;
-        XMVECTOR Row1;
-        XMVECTOR Row2;
+    // 4x4 Matrix (SIMD XMMATRIX 래핑)
+    using FMatrix = XMMATRIX;
 
-        // [초격차] XMM 레지스터에서 직접 저장 (대입 오버헤드 0)
-        inline void Store(CXMMATRIX mat)
+    /**
+     * GPU 대역폭 절감을 위한 3x4 압축 행렬 구조체.
+     */
+    struct FPacked3x4Matrix
+    {
+        FVector Row0;
+        FVector Row1;
+        FVector Row2;
+
+        /**
+         * FMatrix로부터 데이터를 추출하여 압축 저장.
+         */
+        inline void Store(const FMatrix& InMatrix)
         {
-            // 행렬을 전치(Transpose)하여 3x4 형태로 추출 (셰이더는 열 우선 기대 가능성 높음)
-            XMMATRIX t = XMMatrixTranspose(mat);
-            Row0 = t.r[0];
-            Row1 = t.r[1];
-            Row2 = t.r[2];
+            FMatrix Transposed = XMMatrixTranspose(InMatrix);
+            Row0 = Transposed.r[0];
+            Row1 = Transposed.r[1];
+            Row2 = Transposed.r[2];
         }
     };
 
-    // 가장 빠른 충돌 검사를 위한 정렬된 AABB (Center + Extents 방식이 연산이 가장 빠름)
-    __declspec(align(16)) struct AlignedAABB
+    /**
+     * 캐시 라인 정렬이 적용된 Bounding Box (AABB).
+     */
+    __declspec(align(16)) struct FBox
     {
-        XMVECTOR Center;  // w 컴포넌트는 사용하지 않거나 패딩으로 활용
-        XMVECTOR Extents; // 각 축의 반경(Half-size)
+        FVector Center;
+        FVector Extents;
     };
 }

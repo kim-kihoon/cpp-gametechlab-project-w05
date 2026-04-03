@@ -1,58 +1,56 @@
 #include <Graphics/Renderer.h>
 
-namespace ExtremeGraphics
+namespace Graphics
 {
-    Renderer::Renderer() {}
-    Renderer::~Renderer() {}
+    URenderer::URenderer() {}
+    URenderer::~URenderer() {}
 
-    bool Renderer::Initialize(HWND hWnd, int width, int height)
+    bool URenderer::Initialize(HWND InWindowHandle, int InWidth, int InHeight)
     {
-        DXGI_SWAP_CHAIN_DESC sd = {};
-        sd.BufferCount = 2;
-        sd.BufferDesc.Width = width;
-        sd.BufferDesc.Height = height;
-        sd.BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-        sd.BufferDesc.RefreshRate.Numerator = 165; // 165Hz 타겟
-        sd.BufferDesc.RefreshRate.Denominator = 1;
-        sd.Flags = DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH;
-        sd.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
-        sd.OutputWindow = hWnd;
-        sd.SampleDesc.Count = 1;
-        sd.SampleDesc.Quality = 0;
-        sd.Windowed = TRUE;
-        sd.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
+        DXGI_SWAP_CHAIN_DESC SwapChainDesc = {};
+        SwapChainDesc.BufferCount = 2;
+        SwapChainDesc.BufferDesc.Width = InWidth;
+        SwapChainDesc.BufferDesc.Height = InHeight;
+        SwapChainDesc.BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+        SwapChainDesc.BufferDesc.RefreshRate.Numerator = 165;
+        SwapChainDesc.BufferDesc.RefreshRate.Denominator = 1;
+        SwapChainDesc.Flags = DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH;
+        SwapChainDesc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
+        SwapChainDesc.OutputWindow = InWindowHandle;
+        SwapChainDesc.SampleDesc.Count = 1;
+        SwapChainDesc.SampleDesc.Quality = 0;
+        SwapChainDesc.Windowed = TRUE;
+        SwapChainDesc.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
 
-        UINT createDeviceFlags = 0;
+        UINT CreateDeviceFlags = 0;
 #ifdef _DEBUG
-        createDeviceFlags |= D3D11_CREATE_DEVICE_DEBUG;
+        CreateDeviceFlags |= D3D11_CREATE_DEVICE_DEBUG;
 #endif
 
-        D3D_FEATURE_LEVEL featureLevel;
-        const D3D_FEATURE_LEVEL featureLevelArray[2] = { D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_10_0, };
+        const D3D_FEATURE_LEVEL FeatureLevels[] = { D3D_FEATURE_LEVEL_11_0, D3D_FEATURE_LEVEL_10_0 };
+        D3D_FEATURE_LEVEL FeatureLevel;
         
-        HRESULT hr = D3D11CreateDeviceAndSwapChain(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, createDeviceFlags, 
-            featureLevelArray, 2, D3D11_SDK_VERSION, &sd, &m_pSwapChain, &m_pd3dDevice, &featureLevel, &m_pd3dDeviceContext);
+        HRESULT Result = D3D11CreateDeviceAndSwapChain(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, CreateDeviceFlags, 
+            FeatureLevels, 2, D3D11_SDK_VERSION, &SwapChainDesc, &SwapChain, &Device, &FeatureLevel, &Context);
 
-        if (FAILED(hr)) return false;
+        if (FAILED(Result)) return false;
 
-        // Render Target View 생성
-        ComPtr<ID3D11Texture2D> pBackBuffer;
-        m_pSwapChain->GetBuffer(0, IID_PPV_ARGS(&pBackBuffer));
-        m_pd3dDevice->CreateRenderTargetView(pBackBuffer.Get(), nullptr, &m_pMainRenderTargetView);
+        ComPtr<ID3D11Texture2D> BackBuffer;
+        SwapChain->GetBuffer(0, IID_PPV_ARGS(&BackBuffer));
+        Device->CreateRenderTargetView(BackBuffer.Get(), nullptr, &MainRenderTargetView);
 
         return true;
     }
 
-    void Renderer::BeginFrame()
+    void URenderer::BeginFrame()
     {
-        // 화면 지우기 (레드불 감청색 느낌)
-        const float clear_color[4] = { 0.02f, 0.02f, 0.1f, 1.00f };
-        m_pd3dDeviceContext->OMSetRenderTargets(1, m_pMainRenderTargetView.GetAddressOf(), nullptr);
-        m_pd3dDeviceContext->ClearRenderTargetView(m_pMainRenderTargetView.Get(), clear_color);
+        const float ClearColor[4] = { 0.02f, 0.02f, 0.1f, 1.00f };
+        Context->OMSetRenderTargets(1, MainRenderTargetView.GetAddressOf(), nullptr);
+        Context->ClearRenderTargetView(MainRenderTargetView.Get(), ClearColor);
     }
 
-    void Renderer::EndFrame()
+    void URenderer::EndFrame()
     {
-        m_pSwapChain->Present(1, 0); // V-Sync On
+        SwapChain->Present(1, 0);
     }
 }

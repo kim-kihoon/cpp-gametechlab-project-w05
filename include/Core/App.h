@@ -3,40 +3,40 @@
 #include <memory>
 #include <string>
 
-// 전방 선언 (컴파일 속도 최적화)
-namespace ExtremeGraphics { class Renderer; class DebugRenderer; }
-namespace ExtremeScene { class SceneManager; }
-namespace ExtremeUI { class EditorLayer; }
+namespace Graphics { class URenderer; }
+namespace Scene { class USceneManager; }
+namespace UI { class UEditorLayer; }
 
-class App
+/**
+ * VerstappenEngine의 메인 애플리케이션 클래스.
+ */
+class UApp
 {
 public:
-    App();
-    ~App();
+    UApp();
+    ~UApp();
 
-    bool Initialize(HINSTANCE hInstance, int nCmdShow);
+    /** 엔진 초기화 */
+    bool Initialize(HINSTANCE InHInstance, int InCmdShow);
+    
+    /** 메인 루프 실행 */
     int Run();
 
 private:
-    // 핵심 윈도우 메시지 처리
     static LRESULT CALLBACK WindowProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam);
-    void Update(float deltaTime);
+    void Update(float DeltaTime);
     void Render();
 
 private:
-    // 윈도우 관련
-    HWND m_hWnd;
-    HINSTANCE m_hInstance;
-    std::wstring m_AppName = L"VerstappenEngine";
-    int m_ScreenWidth = 1920;
-    int m_ScreenHeight = 1080;
+    HWND WindowHandle;
+    HINSTANCE InstanceHandle;
+    std::wstring AppName = L"cpp-gametechlab-project-w05";
+    int ScreenWidth = 1920;
+    int ScreenHeight = 1080;
 
-    // 핵심 모듈 (Smart Pointers 사용)
-    // 4인 팀이 각자 개발한 모듈들이 여기에 붙게 됩니다.
-    std::unique_ptr<ExtremeGraphics::Renderer> m_pRenderer;
-    std::unique_ptr<ExtremeScene::SceneManager> m_pSceneManager;
-    std::unique_ptr<ExtremeUI::EditorLayer> m_pEditorLayer;
+    std::unique_ptr<Graphics::URenderer> Renderer;
+    std::unique_ptr<Scene::USceneManager> SceneManager;
+    std::unique_ptr<UI::UEditorLayer> EditorLayer;
 
-    // 타이머 관련 (FPS, Elapsed Time 측정용)
-    float m_DeltaTime = 0.0f;
+    float DeltaTime = 0.0f;
 };

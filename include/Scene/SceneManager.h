@@ -3,23 +3,25 @@
 #include <Scene/UniformGrid.h>
 #include <memory>
 
-namespace ExtremeScene
+namespace Scene
 {
-    class SceneManager
+    /**
+     * 전체 씬의 오브젝트와 그리드를 관리하는 매니저 클래스.
+     */
+    class USceneManager
     {
     public:
-        SceneManager();
-        ~SceneManager();
+        USceneManager();
+        ~USceneManager();
 
         void Initialize();
-        void Update(float deltaTime);
+        void Update(float DeltaTime);
         
-        // 5만 개의 SOA 데이터에 접근하기 위한 메서드
-        SceneDataSOA* GetSceneData() { return m_pSceneData.get(); }
-        UniformGrid* GetGrid() { return m_pGrid.get(); }
+        FSceneDataSOA* GetSceneData() { return SceneData.get(); }
+        UUniformGrid* GetGrid() { return Grid.get(); }
 
     private:
-        std::unique_ptr<SceneDataSOA> m_pSceneData;
-        std::unique_ptr<UniformGrid> m_pGrid;
+        std::unique_ptr<FSceneDataSOA> SceneData;
+        std::unique_ptr<UUniformGrid> Grid;
     };
 }

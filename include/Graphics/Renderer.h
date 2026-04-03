@@ -2,27 +2,30 @@
 #include <d3d11.h>
 #include <wrl/client.h>
 
-namespace ExtremeGraphics
+namespace Graphics
 {
     using Microsoft::WRL::ComPtr;
 
-    class Renderer
+    /**
+     * DirectX 11 렌더링을 담당하는 핵심 클래스.
+     */
+    class URenderer
     {
     public:
-        Renderer();
-        ~Renderer();
+        URenderer();
+        ~URenderer();
 
-        bool Initialize(HWND hWnd, int width, int height);
+        bool Initialize(HWND InWindowHandle, int InWidth, int InHeight);
         void BeginFrame();
         void EndFrame();
         
-        ID3D11Device* GetDevice() { return m_pd3dDevice.Get(); }
-        ID3D11DeviceContext* GetContext() { return m_pd3dDeviceContext.Get(); }
+        ID3D11Device* GetDevice() { return Device.Get(); }
+        ID3D11DeviceContext* GetContext() { return Context.Get(); }
 
     private:
-        ComPtr<ID3D11Device> m_pd3dDevice;
-        ComPtr<ID3D11DeviceContext> m_pd3dDeviceContext;
-        ComPtr<IDXGISwapChain> m_pSwapChain;
-        ComPtr<ID3D11RenderTargetView> m_pMainRenderTargetView;
+        ComPtr<ID3D11Device> Device;
+        ComPtr<ID3D11DeviceContext> Context;
+        ComPtr<IDXGISwapChain> SwapChain;
+        ComPtr<ID3D11RenderTargetView> MainRenderTargetView;
     };
 }
