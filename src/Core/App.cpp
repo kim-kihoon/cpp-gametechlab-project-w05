@@ -4,7 +4,7 @@
 #include <Scene/SceneManager.h>
 #include <UI/EditorLayer.h>
 
-UApp::UApp() 
+UApp::UApp()
     : WindowHandle(nullptr)
     , InstanceHandle(nullptr)
     , ScreenWidth(0)
@@ -21,40 +21,73 @@ bool UApp::Initialize(HINSTANCE InHInstance, int InCmdShow)
 {
     InstanceHandle = InHInstance;
 
-    WNDCLASSEXW WindowClass = { sizeof(WNDCLASSEXW), CS_CLASSDC, UApp::WindowProc, 0L, 0L, InstanceHandle, nullptr, nullptr, nullptr, nullptr, L"VerstappenEngineClass", nullptr };
+    WNDCLASSEXW WindowClass = {
+        sizeof(WNDCLASSEXW),
+        CS_CLASSDC,
+        UApp::WindowProc,
+        0L,
+        0L,
+        InstanceHandle,
+        nullptr,
+        nullptr,
+        nullptr,
+        nullptr,
+        L"VerstappenEngineClass",
+        nullptr
+    };
     ::RegisterClassExW(&WindowClass);
 
     DWORD WindowStyle;
 
 #ifdef _DEBUG
-    /** 디버그 모드: 창 모드 */
     ScreenWidth = 1920;
     ScreenHeight = 1080;
     WindowStyle = WS_OVERLAPPEDWINDOW;
 #else
-    /** 릴리즈 모드: 시스템 해상도 전체화면 */
     ScreenWidth = GetSystemMetrics(SM_CXSCREEN);
     ScreenHeight = GetSystemMetrics(SM_CYSCREEN);
     WindowStyle = WS_POPUP;
 #endif
 
     WindowHandle = ::CreateWindowW(
-        WindowClass.lpszClassName, 
-        AppName.c_str(), 
-        WindowStyle, 
-        CW_USEDEFAULT, CW_USEDEFAULT, 
-        ScreenWidth, ScreenHeight, 
-        nullptr, nullptr, InstanceHandle, this);
+        WindowClass.lpszClassName,
+        AppName.c_str(),
+        WindowStyle,
+        CW_USEDEFAULT,
+        CW_USEDEFAULT,
+        ScreenWidth,
+        ScreenHeight,
+        nullptr,
+        nullptr,
+        InstanceHandle,
+        this);
 
-    if (!WindowHandle) return false;
+    if (!WindowHandle)
+    {
+        return false;
+    }
 
     ::ShowWindow(WindowHandle, InCmdShow);
     ::UpdateWindow(WindowHandle);
 
-    if (!Renderer->Initialize(WindowHandle, ScreenWidth, ScreenHeight)) return false;
+    if (!Renderer->Initialize(WindowHandle, ScreenWidth, ScreenHeight))
+    {
+        return false;
+    }
+
     SceneManager->Initialize();
-    
-    if (!EditorLayer->Initialize(WindowHandle, Renderer->GetDevice(), Renderer->GetContext())) return false;
+
+    UI::FEditorModuleDependencies Dependencies;
+    Dependencies.WindowHandle = WindowHandle;
+    Dependencies.Renderer = Renderer.get();
+    Dependencies.SceneManager = SceneManager.get();
+    Dependencies.Device = Renderer->GetDevice();
+    Dependencies.DeviceContext = Renderer->GetContext();
+
+    if (!EditorLayer->Initialize(Dependencies))
+    {
+        return false;
+    }
 
     return true;
 }
@@ -82,12 +115,14 @@ int UApp::Run()
         Render();
     }
 
-    return (int)Message.wParam;
+    return static_cast<int>(Message.wParam);
 }
 
 void UApp::Update(float InDeltaTime)
 {
+    UpdateFramePerformanceMetrics(InDeltaTime);
     SceneManager->Update(InDeltaTime);
+    EditorLayer->SetFramePerformanceMetrics(FramePerformanceMetrics);
     EditorLayer->Update(InDeltaTime);
 }
 
@@ -98,6 +133,14 @@ void UApp::Render()
     Renderer->EndFrame();
 }
 
+void UApp::UpdateFramePerformanceMetrics(float InDeltaTime)
+{
+    FramePerformanceMetrics.DeltaTimeSeconds = InDeltaTime;
+    FramePerformanceMetrics.FramesPerSecond = InDeltaTime > 0.0f ? (1.0f / InDeltaTime) : 0.0f;
+    FramePerformanceMetrics.ElapsedTimeMilliseconds += InDeltaTime * 1000.0f;
+    ++FramePerformanceMetrics.FrameIndex;
+}
+
 LRESULT CALLBACK UApp::WindowProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 {
     switch (message)
@@ -106,5 +149,6 @@ LRESULT CALLBACK UApp::WindowProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM
         ::PostQuitMessage(0);
         return 0;
     }
+
     return ::DefWindowProcW(hWnd, message, wParam, lParam);
 }

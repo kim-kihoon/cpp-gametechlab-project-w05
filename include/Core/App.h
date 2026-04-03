@@ -1,4 +1,5 @@
 #pragma once
+#include <Core/AppTypes.h>
 #include <windows.h>
 #include <memory>
 #include <string>
@@ -8,8 +9,7 @@ namespace Scene { class USceneManager; }
 namespace UI { class UEditorLayer; }
 
 /**
- * Verstappen Engine의 메인 애플리케이션 클래스.
- * 실행 시점의 모니터 해상도를 자동으로 감지하여 최적화됨.
+ * Verstappen Engine 메인 애플리케이션 클래스로 각 서브시스템을 조립한다.
  */
 class UApp
 {
@@ -24,13 +24,12 @@ private:
     static LRESULT CALLBACK WindowProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam);
     void Update(float DeltaTime);
     void Render();
+    void UpdateFramePerformanceMetrics(float InDeltaTime);
 
 private:
     HWND WindowHandle;
     HINSTANCE InstanceHandle;
     std::wstring AppName = L"Verstappen Engine";
-    
-    // 실행 시 감지된 해상도를 저장 (Picking 무결성용)
     int ScreenWidth;
     int ScreenHeight;
 
@@ -39,4 +38,5 @@ private:
     std::unique_ptr<UI::UEditorLayer> EditorLayer;
 
     float DeltaTime = 0.0f;
+    Core::FFramePerformanceMetrics FramePerformanceMetrics;
 };
