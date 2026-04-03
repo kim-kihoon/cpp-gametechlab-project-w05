@@ -12,14 +12,28 @@ namespace Graphics
         SwapChainDesc.BufferDesc.Width = InWidth;
         SwapChainDesc.BufferDesc.Height = InHeight;
         SwapChainDesc.BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+        
+        /** Alienware M15 R5의 165Hz 주사율 고정 */
         SwapChainDesc.BufferDesc.RefreshRate.Numerator = 165;
         SwapChainDesc.BufferDesc.RefreshRate.Denominator = 1;
+        
         SwapChainDesc.Flags = DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH;
         SwapChainDesc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
         SwapChainDesc.OutputWindow = InWindowHandle;
         SwapChainDesc.SampleDesc.Count = 1;
         SwapChainDesc.SampleDesc.Quality = 0;
+        
+        /** 
+         * [디버깅 편의성] 
+         * Debug 모드: 창 모드로 실행하여 다른 창과 함께 보기 편하게 함.
+         * Release 모드: 독점 전체화면으로 실행하여 최상의 성능 확보.
+         */
+        #ifdef _DEBUG
         SwapChainDesc.Windowed = TRUE;
+        #else
+        SwapChainDesc.Windowed = FALSE; 
+        #endif
+        
         SwapChainDesc.SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
 
         UINT CreateDeviceFlags = 0;
@@ -51,6 +65,7 @@ namespace Graphics
 
     void URenderer::EndFrame()
     {
-        SwapChain->Present(1, 0);
+        /** 165Hz 수직동기화(V-Sync) 동기화 */
+        SwapChain->Present(1, 0); 
     }
 }

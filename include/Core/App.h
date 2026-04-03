@@ -9,6 +9,7 @@ namespace UI { class UEditorLayer; }
 
 /**
  * VerstappenEngine의 메인 애플리케이션 클래스.
+ * Alienware M15 R5 (1920x1080, 165Hz) 환경에 최적화됨.
  */
 class UApp
 {
@@ -16,10 +17,7 @@ public:
     UApp();
     ~UApp();
 
-    /** 엔진 초기화 */
     bool Initialize(HINSTANCE InHInstance, int InCmdShow);
-    
-    /** 메인 루프 실행 */
     int Run();
 
 private:
@@ -30,9 +28,11 @@ private:
 private:
     HWND WindowHandle;
     HINSTANCE InstanceHandle;
-    std::wstring AppName = L"cpp-gametechlab-project-w05";
-    int ScreenWidth = 1920;
-    int ScreenHeight = 1080;
+    std::wstring AppName = L"Verstappen Engine";
+    
+    // 대회 사양 고정 (Alienware M15 FHD)
+    static constexpr int ScreenWidth = 1920;
+    static constexpr int ScreenHeight = 1080;
 
     std::unique_ptr<Graphics::URenderer> Renderer;
     std::unique_ptr<Scene::USceneManager> SceneManager;
