@@ -15,7 +15,13 @@ UApp::UApp()
     EditorLayer = std::make_unique<UI::UEditorLayer>();
 }
 
-UApp::~UApp() {}
+UApp::~UApp()
+{
+    if (EditorLayer)
+    {
+        EditorLayer->Cleanup();
+    }
+}
 
 bool UApp::Initialize(HINSTANCE InHInstance, int InCmdShow)
 {
@@ -27,8 +33,8 @@ bool UApp::Initialize(HINSTANCE InHInstance, int InCmdShow)
     DWORD WindowStyle;
 
 #ifdef _DEBUG
-    ScreenWidth = 1920;
-    ScreenHeight = 1080;
+    ScreenWidth = 1280;
+    ScreenHeight = 720;
     WindowStyle = WS_OVERLAPPEDWINDOW;
 #else
     ScreenWidth = GetSystemMetrics(SM_CXSCREEN);
@@ -40,16 +46,13 @@ bool UApp::Initialize(HINSTANCE InHInstance, int InCmdShow)
 
     if (!WindowHandle) return false;
 
+    ::SetWindowLongPtrW(WindowHandle, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(this));
     ::ShowWindow(WindowHandle, InCmdShow);
     ::UpdateWindow(WindowHandle);
 
-    // 1. 그래픽 렌더러 초기화
     if (!Renderer->Initialize(WindowHandle, ScreenWidth, ScreenHeight)) return false;
-    
-    // 2. 씬 매니저 초기화
     SceneManager->Initialize();
     
-    // 3. 에디터 UI 초기화 (수정된 인터페이스 반영)
     UI::FEditorModuleDependencies EditorDeps;
     EditorDeps.WindowHandle = WindowHandle;
     EditorDeps.Renderer = Renderer.get();
@@ -97,15 +100,22 @@ void UApp::Update(float InDeltaTime)
 void UApp::Render()
 {
     Renderer->BeginFrame();
-
-    // [TODO] 렌더 루프 구현 (UpdateInstanceBuffer 활용)
-
     EditorLayer->Draw();
     Renderer->EndFrame();
 }
 
 LRESULT CALLBACK UApp::WindowProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam)
 {
+    UApp* AppInstance = reinterpret_cast<UApp*>(::GetWindowLongPtrW(hWnd, GWLP_USERDATA));
+    
+    if (AppInstance != nullptr && AppInstance->EditorLayer != nullptr)
+    {
+        if (AppInstance->EditorLayer->HandleWindowMessage(hWnd, message, wParam, lParam))
+        {
+            return 1;
+        }
+    }
+
     switch (message)
     {
     case WM_DESTROY:

@@ -8,8 +8,23 @@ namespace Scene
 {
     namespace
     {
-        // 사과의 기본 반경 (필요 시 메시 데이터로부터 자동 계산하도록 확장 가능)
-        constexpr float DEFAULT_HALF_EXTENT = 0.5f; 
+        constexpr float DEFAULT_HALF_EXTENT = 0.5f;
+
+        Math::FBox MakeDefaultBounds()
+        {
+            return Math::FBox{ { -0.5f, -0.5f, -0.5f }, { 0.5f, 0.5f, 0.5f } };
+        }
+
+        /** [성능] SOA 배열에 AABB 데이터를 효율적으로 기록 */
+        void WriteBounds(FSceneDataSOA& InSceneData, uint32_t InIndex, const Math::FBox& InBounds)
+        {
+            InSceneData.MinX[InIndex] = InBounds.Min.x;
+            InSceneData.MinY[InIndex] = InBounds.Min.y;
+            InSceneData.MinZ[InIndex] = InBounds.Min.z;
+            InSceneData.MaxX[InIndex] = InBounds.Max.x;
+            InSceneData.MaxY[InIndex] = InBounds.Max.y;
+            InSceneData.MaxZ[InIndex] = InBounds.Max.z;
+        }
     }
 
     USceneManager::USceneManager() {}
@@ -18,18 +33,13 @@ namespace Scene
     void USceneManager::Initialize()
     {
         SceneData = std::make_unique<FSceneDataSOA>();
-        
-        // 50x50x20 정형 배치를 위한 그리드 초기화
-        // 월드 크기에 따라 CellSize 조정 필요 (예: 사과 간격이 2.0이면 CellSize는 10.0 정도가 적당)
         Grid = std::make_unique<UUniformGrid>(50, 50, 20, 10.0f, SceneData.get());
-        
         ResetScene();
     }
 
     void USceneManager::Update(float DeltaTime)
     {
-        // [Hot Path] 5만 개 가시성 카운트는 Culling 엔진이 직접 SceneStatistics.VisibleObjectCount를 업데이트하게 함.
-        // 여기서는 매 프레임 루프를 도는 행위를 금지함.
+        // Culling 엔진이 RenderCount를 갱신하므로 여기선 루프를 돌지 않음
     }
 
     void USceneManager::ResetScene()
@@ -40,45 +50,67 @@ namespace Scene
         SceneData->ResetRenderQueue();
         SceneData->IsVisible.fill(false);
         ResetSelectionState();
+        
+        if (Grid) Grid->ClearGrid();
     }
 
     bool USceneManager::SpawnStaticMesh(const FSceneSpawnRequest& InRequest)
     {
-        if (!SceneData || SceneStatistics.TotalObjectCount >= FSceneDataSOA::MAX_OBJECTS)
-        {
-            return false;
-        }
+        if (!SceneData || SceneStatistics.TotalObjectCount >= FSceneDataSOA::MAX_OBJECTS) return false;
 
-        const uint32_t ObjectIndex = SceneStatistics.TotalObjectCount;
+        const uint32_t Index = SceneStatistics.TotalObjectCount;
         
-        // 1. 행렬 압축 저장 (3x4)
-        SceneData->WorldMatrices[ObjectIndex].Store(InRequest.WorldMatrix);
-
-        // 2. AABB 계산 및 SOA 분할 저장
+        // 데이터 주입
+        SceneData->WorldMatrices[Index].Store(InRequest.WorldMatrix);
+        
         const DirectX::XMVECTOR Translation = InRequest.WorldMatrix.r[3];
-        const float CX = DirectX::XMVectorGetX(Translation);
-        const float CY = DirectX::XMVectorGetY(Translation);
-        const float CZ = DirectX::XMVectorGetZ(Translation);
-
-        SceneData->MinX[ObjectIndex] = CX - DEFAULT_HALF_EXTENT;
-        SceneData->MinY[ObjectIndex] = CY - DEFAULT_HALF_EXTENT;
-        SceneData->MinZ[ObjectIndex] = CZ - DEFAULT_HALF_EXTENT;
-        SceneData->MaxX[ObjectIndex] = CX + DEFAULT_HALF_EXTENT;
-        SceneData->MaxY[ObjectIndex] = CY + DEFAULT_HALF_EXTENT;
-        SceneData->MaxZ[ObjectIndex] = CZ + DEFAULT_HALF_EXTENT;
-
-        // 3. 기타 메타데이터
-        SceneData->MeshIDs[ObjectIndex] = InRequest.MeshID;
-        SceneData->MaterialIDs[ObjectIndex] = InRequest.MaterialID;
-        SceneData->IsVisible[ObjectIndex] = true;
+        Math::FBox Bounds;
+        float CX = DirectX::XMVectorGetX(Translation);
+        float CY = DirectX::XMVectorGetY(Translation);
+        float CZ = DirectX::XMVectorGetZ(Translation);
+        Bounds.Min = { CX - DEFAULT_HALF_EXTENT, CY - DEFAULT_HALF_EXTENT, CZ - DEFAULT_HALF_EXTENT };
+        Bounds.Max = { CX + DEFAULT_HALF_EXTENT, CY + DEFAULT_HALF_EXTENT, CZ + DEFAULT_HALF_EXTENT };
+        
+        WriteBounds(*SceneData, Index, Bounds);
+        SceneData->MeshIDs[Index] = InRequest.MeshID;
+        SceneData->MaterialIDs[Index] = InRequest.MaterialID;
+        SceneData->IsVisible[Index] = true;
 
         SceneStatistics.TotalObjectCount++;
 
-        // 4. 그리드 삽입
-        if (Grid)
-        {
-            Grid->InsertObject(ObjectIndex);
-        }
+        if (Grid) Grid->InsertObject(Index);
+
+        return true;
+    }
+
+    bool USceneManager::EnsureObjectCount(uint32_t InObjectCount)
+    {
+        if (InObjectCount > FSceneDataSOA::MAX_OBJECTS) return false;
+        if (!SceneData) Initialize();
+        SceneStatistics.TotalObjectCount = InObjectCount;
+        return true;
+    }
+
+    bool USceneManager::AddObject(const Math::FBox& InBounds, const Math::FMatrix& InWorldMatrix, uint32_t InMeshID, uint32_t InMaterialID)
+    {
+        Math::FPacked3x4Matrix Packed;
+        Packed.Store(InWorldMatrix);
+        return AddObjectPacked(InBounds, Packed, InMeshID, InMaterialID);
+    }
+
+    bool USceneManager::AddObjectPacked(const Math::FBox& InBounds, const Math::FPacked3x4Matrix& InWorldMatrix, uint32_t InMeshID, uint32_t InMaterialID)
+    {
+        if (!SceneData || SceneStatistics.TotalObjectCount >= FSceneDataSOA::MAX_OBJECTS) return false;
+
+        const uint32_t Index = SceneStatistics.TotalObjectCount;
+        WriteBounds(*SceneData, Index, InBounds);
+        SceneData->WorldMatrices[Index] = InWorldMatrix;
+        SceneData->MeshIDs[Index] = InMeshID;
+        SceneData->MaterialIDs[Index] = InMaterialID;
+        SceneData->IsVisible[Index] = true;
+
+        SceneStatistics.TotalObjectCount++;
+        if (Grid) Grid->InsertObject(Index);
 
         return true;
     }
@@ -94,12 +126,7 @@ namespace Scene
                     FSceneSpawnRequest Req;
                     Req.MeshID = InRequest.MeshID;
                     Req.MaterialID = InRequest.MaterialID;
-                    
-                    float PosX = static_cast<float>(X) * InRequest.Spacing;
-                    float PosY = static_cast<float>(Y) * InRequest.Spacing;
-                    float PosZ = static_cast<float>(Z) * InRequest.Spacing;
-                    Req.WorldMatrix = DirectX::XMMatrixTranslation(PosX, PosY, PosZ);
-
+                    Req.WorldMatrix = DirectX::XMMatrixTranslation(X * InRequest.Spacing, Y * InRequest.Spacing, Z * InRequest.Spacing);
                     if (!SpawnStaticMesh(Req)) return;
                 }
             }
@@ -109,31 +136,26 @@ namespace Scene
     bool USceneManager::SaveSceneBinary(const std::wstring& InFilePath) const
     {
         if (!SceneData || InFilePath.empty()) return false;
-
         std::ofstream File(InFilePath, std::ios::binary);
         if (!File) return false;
 
         const uint32_t Count = SceneStatistics.TotalObjectCount;
         File.write(reinterpret_cast<const char*>(&Count), sizeof(Count));
-
-        // [성능] 개별 write 대신 큰 블록 단위로 기록하여 I/O 지연 단축
         File.write(reinterpret_cast<const char*>(SceneData->MinX.data()), sizeof(float) * Count);
         File.write(reinterpret_cast<const char*>(SceneData->MinY.data()), sizeof(float) * Count);
         File.write(reinterpret_cast<const char*>(SceneData->MinZ.data()), sizeof(float) * Count);
         File.write(reinterpret_cast<const char*>(SceneData->MaxX.data()), sizeof(float) * Count);
         File.write(reinterpret_cast<const char*>(SceneData->MaxY.data()), sizeof(float) * Count);
         File.write(reinterpret_cast<const char*>(SceneData->MaxZ.data()), sizeof(float) * Count);
-        File.write(reinterpret_cast<const char*>(SceneData->WorldMatrices.data()), sizeof(FPacked3x4Matrix) * Count);
+        File.write(reinterpret_cast<const char*>(SceneData->WorldMatrices.data()), sizeof(Math::FPacked3x4Matrix) * Count);
         File.write(reinterpret_cast<const char*>(SceneData->MeshIDs.data()), sizeof(uint32_t) * Count);
         File.write(reinterpret_cast<const char*>(SceneData->MaterialIDs.data()), sizeof(uint32_t) * Count);
-
         return File.good();
     }
 
     bool USceneManager::LoadSceneBinary(const std::wstring& InFilePath)
     {
         if (!SceneData || InFilePath.empty()) return false;
-
         std::ifstream File(InFilePath, std::ios::binary);
         if (!File) return false;
 
@@ -142,15 +164,13 @@ namespace Scene
         if (Count > FSceneDataSOA::MAX_OBJECTS) return false;
 
         ResetScene();
-
-        // [성능] 메모리 블록 단위 고속 로드
         File.read(reinterpret_cast<char*>(SceneData->MinX.data()), sizeof(float) * Count);
         File.read(reinterpret_cast<char*>(SceneData->MinY.data()), sizeof(float) * Count);
         File.read(reinterpret_cast<char*>(SceneData->MinZ.data()), sizeof(float) * Count);
         File.read(reinterpret_cast<char*>(SceneData->MaxX.data()), sizeof(float) * Count);
         File.read(reinterpret_cast<char*>(SceneData->MaxY.data()), sizeof(float) * Count);
         File.read(reinterpret_cast<char*>(SceneData->MaxZ.data()), sizeof(float) * Count);
-        File.read(reinterpret_cast<char*>(SceneData->WorldMatrices.data()), sizeof(FPacked3x4Matrix) * Count);
+        File.read(reinterpret_cast<char*>(SceneData->WorldMatrices.data()), sizeof(Math::FPacked3x4Matrix) * Count);
         File.read(reinterpret_cast<char*>(SceneData->MeshIDs.data()), sizeof(uint32_t) * Count);
         File.read(reinterpret_cast<char*>(SceneData->MaterialIDs.data()), sizeof(uint32_t) * Count);
 
@@ -160,8 +180,7 @@ namespace Scene
 
     bool USceneManager::SelectObject(uint32_t InObjectIndex)
     {
-        if (!SceneData || InObjectIndex >= SceneStatistics.TotalObjectCount) return false;
-
+        if (!IsValidIndex(InObjectIndex)) return false;
         SelectionData.bHasSelection = true;
         SelectionData.ObjectIndex = InObjectIndex;
         SelectionData.MeshID = SceneData->MeshIDs[InObjectIndex];
