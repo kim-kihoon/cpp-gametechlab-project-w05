@@ -1,61 +1,53 @@
 #pragma once
 #include <Math/MathTypes.h>
 
-namespace ExtremeMath
+namespace Math
 {
-    enum class CullingResult
+    /**
+     * 컬링 결과 열거형.
+     */
+    enum class ECullingResult
     {
         Outside = 0,
         Intersecting = 1,
-        FullyInside = 2  // [초격차] 이 결과가 나오면 하위 객체 검사 무조건 통과 (Skip)
+        FullyInside = 2
     };
 
-    struct OptimizedFrustum
+    /**
+     * Frustum Culling을 위한 평면 집합 구조체.
+     */
+    struct FFrustum
     {
-        // 평면 방정식 (nx, ny, nz, d) -> 평면 6개를 16-byte 정렬된 벡터 배열로 저장
-        __declspec(align(16)) XMVECTOR Planes[6];
+        alignas(16) FVector4 Planes[6];
 
-        // 카메라의 ViewProj 행렬로부터 6개의 평면을 추출
-        void BuildFromMatrix(CXMMATRIX viewProj)
-        {
-            // (Left, Right, Bottom, Top, Near, Far)
-            // 평면 추출 후 XMPlaneNormalize 로 정규화하는 코드 필요 (자세한 Math 생략)
-            XMFLOAT4X4 m;
-            XMStoreFloat4x4(&m, viewProj);
-            // ... (Extract planes using Gribb/Hartner method or D3D11 standard)
-            // 이곳에 SIMD 기반의 평면 추출 및 정규화 로직 구현
-        }
+        /** 카메라 행렬로부터 프러스텀 평면 구축 */
+        void BuildFromMatrix(const FMatrix& ViewProj);
 
-        // [초격차] 1개의 AABB에 대해 SIMD 기반 고속 충돌 검사
-        // 리턴: Outside, Intersecting, FullyInside
-        inline CullingResult TestAABB(const AlignedAABB& aabb) const
+        /** 박스와 프러스텀 간의 교차 여부 테스트 */
+        inline ECullingResult TestBox(const FBox& Box) const
         {
-            // 모든 평면에 대해 완전히 안쪽(FullyInside)인지 추적
-            bool fullyInside = true;
+            bool bFullyInside = true;
 
             for (int i = 0; i < 6; ++i)
             {
-                XMVECTOR plane = Planes[i];
+                FVector Plane = Planes[i];
+                FVector PlaneNormal = XMVectorSetW(Plane, 0.0f);
+                FVector PlaneNormalAbs = XMVectorAbs(PlaneNormal);
                 
-                // SIMD로 평면의 법선과 Extent의 Dot Product 연산 (P-N Vertex 방식)
-                XMVECTOR planeNormal = XMVectorSetW(plane, 0.0f);
-                XMVECTOR planeNormalAbs = XMVectorAbs(planeNormal);
-                XMVECTOR r = XMVector3Dot(aabb.Extents, planeNormalAbs);
-                XMVECTOR s = XMVector3Dot(aabb.Center, plane);
+                FVector R = XMVector3Dot(Box.Extents, PlaneNormalAbs);
+                FVector S = XMVector3Dot(Box.Center, Plane);
                 
-                // s + r < 0 이면 Outside (평면 뒤에 있음)
-                // s - r < 0 이면 Intersecting (평면에 걸침)
-                if (XMVector4Less(XMVectorAdd(s, r), XMVectorZero()))
+                if (XMVector4Less(XMVectorAdd(S, R), XMVectorZero()))
                 {
-                    return CullingResult::Outside; // 완전히 바깥
+                    return ECullingResult::Outside;
                 }
-                if (XMVector4Less(XMVectorSubtract(s, r), XMVectorZero()))
+                if (XMVector4Less(XMVectorSubtract(S, R), XMVectorZero()))
                 {
-                    fullyInside = false; // 걸침
+                    bFullyInside = false;
                 }
             }
 
-            return fullyInside ? CullingResult::FullyInside : CullingResult::Intersecting;
+            return bFullyInside ? ECullingResult::FullyInside : ECullingResult::Intersecting;
         }
     };
 }

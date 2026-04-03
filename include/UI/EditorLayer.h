@@ -2,21 +2,23 @@
 #include <windows.h>
 #include <d3d11.h>
 
-namespace ExtremeUI
+namespace UI
 {
-    class EditorLayer
+    /**
+     * ImGui 기반 에디터 레이어를 담당하는 클래스.
+     */
+    class UEditorLayer
     {
     public:
-        EditorLayer();
-        ~EditorLayer();
+        UEditorLayer();
+        ~UEditorLayer();
 
-        bool Initialize(HWND hWnd, ID3D11Device* device, ID3D11DeviceContext* context);
-        void Update(float deltaTime);
+        bool Initialize(HWND InWindowHandle, ID3D11Device* InDevice, ID3D11DeviceContext* InContext);
+        void Update(float DeltaTime);
         void Draw();
         void Cleanup();
 
     private:
-        // ImGui 창들을 그리는 내부 메서드
         void DrawControlPanel();
         void DrawSceneManager();
         void DrawPropertyWindow();
