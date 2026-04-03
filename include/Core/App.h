@@ -8,8 +8,8 @@ namespace Scene { class USceneManager; }
 namespace UI { class UEditorLayer; }
 
 /**
- * VerstappenEngine의 메인 애플리케이션 클래스.
- * Alienware M15 R5 (1920x1080, 165Hz) 환경에 최적화됨.
+ * Verstappen Engine의 메인 애플리케이션 클래스.
+ * 실행 시점의 모니터 해상도를 자동으로 감지하여 최적화됨.
  */
 class UApp
 {
@@ -30,9 +30,9 @@ private:
     HINSTANCE InstanceHandle;
     std::wstring AppName = L"Verstappen Engine";
     
-    // 대회 사양 고정 (Alienware M15 FHD)
-    static constexpr int ScreenWidth = 1920;
-    static constexpr int ScreenHeight = 1080;
+    // 실행 시 감지된 해상도를 저장 (Picking 무결성용)
+    int ScreenWidth;
+    int ScreenHeight;
 
     std::unique_ptr<Graphics::URenderer> Renderer;
     std::unique_ptr<Scene::USceneManager> SceneManager;
