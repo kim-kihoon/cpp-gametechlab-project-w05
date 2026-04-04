@@ -284,14 +284,32 @@ void UApp::UniformCullingAndRenderCollect()
     {
         Scene::FSceneDataSOA* SceneData = SceneManager->GetSceneData();
         SceneData->ResetRenderQueue();
+        SceneData->IsVisible.fill(false);
+
+        Math::FFrustum CameraFrustum = {};
+        CameraFrustum.BuildFromViewProjection(
+            BuildCameraViewMatrix(CameraState),
+            BuildCameraProjectionMatrix(CameraState, ScreenWidth, ScreenHeight));
 
         const uint32_t TotalObjectCount = SceneManager->GetSceneStatistics().TotalObjectCount;
         for (uint32_t ObjectIndex = 0; ObjectIndex < TotalObjectCount; ++ObjectIndex)
         {
+            if (CameraFrustum.TestBox(
+                SceneData->MinX[ObjectIndex],
+                SceneData->MinY[ObjectIndex],
+                SceneData->MinZ[ObjectIndex],
+                SceneData->MaxX[ObjectIndex],
+                SceneData->MaxY[ObjectIndex],
+                SceneData->MaxZ[ObjectIndex]) == Math::ECullingResult::Outside)
+            {
+                continue;
+            }
+
             SceneData->AddToRenderQueue(ObjectIndex);
+            SceneData->IsVisible[ObjectIndex] = true;
         }
 
-        SceneManager->SetVisibleObjectCount(TotalObjectCount);
+        SceneManager->SetVisibleObjectCount(SceneData->RenderCount);
     }
 
     UpdateFramePerformanceMetrics(InDeltaTime);
@@ -359,7 +377,7 @@ void UApp::UpdateFramePerformanceMetrics(float InDeltaTime)
     TitleStream << std::fixed
                 << L"Verstappen Engine | Scene Preview | FPS(avg): " << AverageFPS
                 << L" | Frame(ms): " << AverageFrameMilliseconds
-                << L" | Visible: " << VisibleObjects
+                << L" | FrustumVisible: " << VisibleObjects
                 << L"/" << TotalObjects;
     ::SetWindowTextW(WindowHandle, TitleStream.str().c_str());
 

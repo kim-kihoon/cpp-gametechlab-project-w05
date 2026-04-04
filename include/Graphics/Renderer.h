@@ -1,7 +1,10 @@
 #pragma once
 #include <Graphics/RendererTypes.h>
+#include <DirectXMath.h>
 #include <array>
 #include <d3d11_1.h>
+#include <string>
+#include <vector>
 #include <wrl/client.h>
 
 namespace Scene { class USceneManager; }
@@ -13,12 +16,23 @@ namespace Graphics
     class URenderer
     {
     public:
+        struct FMeshVertex
+        {
+            DirectX::XMFLOAT3 Position;
+            DirectX::XMFLOAT3 Normal;
+            DirectX::XMFLOAT2 TexCoord;
+        };
+
         struct FMeshResource
         {
+            std::vector<FMeshVertex> SourceVertices;
+            std::vector<uint32_t> SourceIndices;
             ComPtr<ID3D11Buffer> VertexBuffer;
             ComPtr<ID3D11Buffer> IndexBuffer;
             ComPtr<ID3D11ShaderResourceView> DiffuseTextureView;
+            std::wstring DiffuseTexturePath;
             uint32_t IndexCount = 0;
+            uint32_t ObjectCount = 0;
         };
 
         URenderer();
