@@ -1,5 +1,10 @@
 ﻿#include <Core/App.h>
+#include <Core/PlatformTime.h>
 #include <Graphics/Renderer.h>
+
+// FPlatformTime 정적 멤버 정의 (링크 에러 방지)
+double Core::FPlatformTime::GSecondsPerCycle = 0.0;
+bool Core::FPlatformTime::bInitialized = false;
 #include <Math/Frustum.h>
 #include <Scene/AssetLoader.h>
 #include <Scene/SceneData.h>
@@ -402,15 +407,20 @@ void UApp::Picking()
             SceneManager->ClearSelection();
         }
 
+        // 전체 소요 시간 기록: 현재 사이클 - 클릭 시작 사이클
+        FramePerformanceMetrics.LastPickingCycles = Core::FPlatformTime::Cycles64() - PickStartCycles;
+
         bPendingPick = false;
     }
 }
 
 void UApp::Render()
 {
+    Renderer->UpdatePerformanceMetrics(FramePerformanceMetrics); // 추가: 성능 데이터 전달
     Renderer->SetCameraState(CameraState);
     Renderer->BeginFrame();
     Renderer->RenderScene(*SceneManager);
+    Renderer->RenderHUD(); // 추가: HUD 렌더링
     EditorLayer->Draw();
     Renderer->EndFrame();
 }
@@ -440,7 +450,7 @@ void UApp::UpdateCamera(float InDeltaTime)
 void UApp::UpdateFramePerformanceMetrics(float InDeltaTime)
 {
     FramePerformanceMetrics.DeltaTimeSeconds = InDeltaTime;
-    FramePerformanceMetrics.ElapsedTimeMilliseconds = InDeltaTime * 1000.0f;
+    //     FramePerformanceMetrics.ElapsedTimeMilliseconds = InDeltaTime * 1000.0f;
     FramePerformanceMetrics.FramesPerSecond = (InDeltaTime > 0.0f) ? (1.0f / InDeltaTime) : 0.0f;
     ++FramePerformanceMetrics.FrameIndex;
 
@@ -507,6 +517,7 @@ LRESULT CALLBACK UApp::WindowProc(HWND hWnd, UINT Message, WPARAM wParam, LPARAM
     case WM_LBUTTONDOWN:
         if (AppInstance != nullptr)
         {
+            AppInstance->PickStartCycles = Core::FPlatformTime::Cycles64();
             AppInstance->bPendingPick = true;
             AppInstance->PickPosition.x = GET_X_LPARAM(lParam);
             AppInstance->PickPosition.y = GET_Y_LPARAM(lParam);

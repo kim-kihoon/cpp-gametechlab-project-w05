@@ -380,6 +380,7 @@ namespace Graphics
         ViewportWidth = static_cast<uint32_t>(InWidth);
         ViewportHeight = static_cast<uint32_t>(InHeight);
 
+        // ... (기존 SwapChain 설정 생략)
         DXGI_SWAP_CHAIN_DESC SwapChainDesc = {};
         SwapChainDesc.BufferCount = 3; // Triple Buffering
         SwapChainDesc.BufferDesc.Width = InWidth;
@@ -431,7 +432,20 @@ namespace Graphics
         if (FAILED(Device->CreateTexture2D(&DepthDesc, nullptr, &DepthBuffer))) return false;
         if (FAILED(Device->CreateDepthStencilView(DepthBuffer.Get(), nullptr, &DepthStencilView))) return false;
 
+        // HUD 초기화
+        HUD = std::make_unique<FHUD>();
+        if (!HUD->Initialize(Device.Get(), Context.Get())) return false;
+
         return CreateDefaultResources();
+    }
+
+    void URenderer::RenderHUD()
+    {
+        if (HUD)
+        {
+            HUD->Update(CurrentMetrics, ViewportWidth, ViewportHeight);
+            HUD->Render();
+        }
     }
 
     void URenderer::Resize(int Width, int Height)

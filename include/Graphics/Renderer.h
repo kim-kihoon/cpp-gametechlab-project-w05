@@ -1,8 +1,11 @@
 ﻿#pragma once
 #include <Graphics/RendererTypes.h>
+#include <Graphics/HUD.h>
+#include <Core/AppTypes.h>
 #include <DirectXMath.h>
 #include <array>
 #include <d3d11_1.h>
+#include <memory>
 #include <string>
 #include <vector>
 #include <wrl/client.h>
@@ -16,6 +19,7 @@ namespace Graphics
     class URenderer
     {
     public:
+        // ... (FMeshVertex, FMeshResource 등 기존 구조체 생략은 replace에서 위험하므로 전체 포함)
         struct FMeshVertex
         {
             DirectX::XMFLOAT3 Position;
@@ -43,11 +47,16 @@ namespace Graphics
         void BeginFrame();
         void EndFrame();
         void RenderScene(const Scene::USceneManager& InSceneManager);
+        void RenderHUD(); // 추가: HUD 렌더링 호출용
+
         void SetCameraState(const FCameraState& InCameraState) { CameraState = InCameraState; }
         const FCameraState& GetCameraState() const { return CameraState; }
 
         void SetDebugRenderSettings(const FDebugRenderSettings& InSettings) { DebugSettings = InSettings; }
         const FDebugRenderSettings& GetDebugRenderSettings() const { return DebugSettings; }
+
+        // 추가: 성능 데이터 전달용
+        void UpdatePerformanceMetrics(const Core::FFramePerformanceMetrics& InMetrics) { CurrentMetrics = InMetrics; }
 
         ID3D11Device* GetDevice() { return Device.Get(); }
         ID3D11DeviceContext* GetContext() { return Context.Get(); }
@@ -87,5 +96,7 @@ namespace Graphics
         FCameraState CameraState = {};
 
         FDebugRenderSettings DebugSettings;
+        Core::FFramePerformanceMetrics CurrentMetrics; // 추가: HUD에 전달할 데이터
+        std::unique_ptr<FHUD> HUD; // 추가: HUD 객체
     };
 }
