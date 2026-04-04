@@ -46,6 +46,7 @@ namespace Graphics
             std::wstring DiffuseTexturePath;
             uint32_t IndexCount = 0;
             uint32_t ObjectCount = 0;
+            DirectX::XMFLOAT3 LocalCenter = { 0, 0, 0 };
         };
 
         URenderer();
