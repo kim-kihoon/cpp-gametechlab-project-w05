@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include <DirectXMath.h>
 #include <cstdint>
 
@@ -37,4 +37,25 @@ namespace Math
         XMFLOAT3 Min;
         XMFLOAT3 Max;
     };
+
+	struct FRay
+	{
+		XMFLOAT3 Origin;
+		XMFLOAT3 Direction;
+		XMFLOAT3 InvDirection; // [최적화] 나눗셈을 곱셈으로 바꾸기 위한 역수
+
+		FRay(const XMFLOAT3& InOrigin, const XMFLOAT3& InDirection)
+		{
+			Origin = InOrigin;
+
+			// 방향 벡터 정규화(길이 1) 및 역수 캐싱
+			XMVECTOR Dir = XMVector3Normalize(XMLoadFloat3(&InDirection));
+			XMStoreFloat3(&Direction, Dir);
+
+			// 0으로 나누기 방지를 위해 아주 작은 값(epsilon) 추가
+			InvDirection.x = 1.0f / (Direction.x != 0.0f ? Direction.x : 0.000001f);
+			InvDirection.y = 1.0f / (Direction.y != 0.0f ? Direction.y : 0.000001f);
+			InvDirection.z = 1.0f / (Direction.z != 0.0f ? Direction.z : 0.000001f);
+		}
+	};
 }

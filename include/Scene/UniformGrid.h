@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include <vector>
 #include <array>
 #include <Math/Frustum.h>
@@ -24,6 +24,7 @@ namespace Scene
         float OriginX;
         float OriginY;
         float OriginZ;
+        float InvCellSize;
         std::vector<FGridCell> Cells;
         FSceneDataSOA* SceneData;
 
@@ -38,10 +39,14 @@ namespace Scene
         /** [성능] 그리드 초기화 및 객체 재배치 준비 */
         void ClearGrid();
 
-        /** [성능] 객체를 그리드에 삽입 (현재는 인프라 구축용으로 vector 잠시 활용 가능하나 최종은 2-pass 권장) */
-        void InsertObject(uint32_t ObjectIndex);
+        void BuildGrid();
 
-        /** [Hot Path] 최적화된 컬링 루프 */
+        // void InsertObject(uint32_t ObjectIndex);
+
+        // void CullingAndBuildRenderQueue_ExactSort(const Math::FFrustum& Frustum, const Math::FVector& CameraPosVec);
+        void CullingAndBuildRenderQueue_GridSort(const Math::FFrustum& Frustum, const Math::FVector& CameraPosVec);
         void CullingAndBuildRenderQueue(const Math::FFrustum& Frustum);
+
+        bool Raycast(const Math::FRay& Ray, float MaxDistance, uint32_t& OutHitIndex, float& OutHitDistance);
     };
 }

@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include <Core/AppTypes.h>
 #include <Graphics/RendererTypes.h>
 #include <windows.h>
@@ -25,6 +25,7 @@ public:
 private:
     static LRESULT CALLBACK WindowProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam);
     void Update(float DeltaTime);
+    void UniformCullingAndRenderCollect();
     void Render();
     void UpdateFramePerformanceMetrics(float InDeltaTime);
     void UpdateCamera(float InDeltaTime);

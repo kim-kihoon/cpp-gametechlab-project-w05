@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include <Math/MathTypes.h>
 #include <Scene/SceneData.h>
 #include <Scene/SceneTypes.h>
@@ -25,7 +25,7 @@ namespace Scene
         void ResetScene();
 
         /** [High-Level] 객체 생성 인터페이스 */
-        bool SpawnStaticMesh(const FSceneSpawnRequest& InRequest);
+        bool SpawnStaticMesh(const FSceneSpawnRequest& InRequest, bool bRebuildGrid = true);
         void SpawnStaticMeshGrid(const FSceneGridSpawnRequest& InRequest);
 
         /** [Low-Level] 데이터 직접 주입 인터페이스 (성능 최적화용) */
@@ -40,18 +40,18 @@ namespace Scene
         /** 객체 선택 및 관리 */
         bool SelectObject(uint32_t InObjectIndex);
         void ClearSelection();
-        bool IsValidIndex(uint32_t InIndex) const { return SceneData != nullptr && InIndex < SceneStatistics.TotalObjectCount; }
+        bool IsValidIndex(uint32_t InIndex) const { return SceneData != nullptr && InIndex < SceneData->TotalObjectCount; }
 
         /** Getters */
         FSceneDataSOA* GetSceneData() { return SceneData.get(); }
         const FSceneDataSOA* GetSceneData() const { return SceneData.get(); }
         UUniformGrid* GetGrid() { return Grid.get(); }
-        const UUniformGrid* GetGrid() const { return Grid.get(); }
-        const FSceneStatistics& GetSceneStatistics() const { return SceneStatistics; }
+		const UUniformGrid* GetGrid() const { return Grid.get(); }
+		const FSceneStatistics& GetSceneStatistics() const;
         const FSceneSelectionData& GetSelectionData() const { return SelectionData; }
-        void SetVisibleObjectCount(uint32_t InVisibleObjectCount) { SceneStatistics.VisibleObjectCount = InVisibleObjectCount; }
+        uint32_t GetVisibleObjectCount() const { return SceneData ? SceneData->RenderCount : 0; }
 
-        uint32_t GetObjectCount() const { return SceneStatistics.TotalObjectCount; }
+        uint32_t GetObjectCount() const { return SceneData ? SceneData->TotalObjectCount : 0; }
         static constexpr uint32_t GetMaxObjectCount() { return FSceneDataSOA::MAX_OBJECTS; }
 
     private:
@@ -59,7 +59,6 @@ namespace Scene
 
         std::unique_ptr<FSceneDataSOA> SceneData;
         std::unique_ptr<UUniformGrid> Grid;
-        FSceneStatistics SceneStatistics;
         FSceneSelectionData SelectionData;
     };
 }

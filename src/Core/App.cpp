@@ -1,4 +1,4 @@
-#include <Core/App.h>
+﻿#include <Core/App.h>
 #include <Graphics/Renderer.h>
 #include <Math/Frustum.h>
 #include <Scene/AssetLoader.h>
@@ -70,7 +70,7 @@ namespace
     bool ComputeSceneBounds(const Scene::USceneManager& InSceneManager, Math::FBox& OutBounds)
     {
         const Scene::FSceneDataSOA* SceneData = InSceneManager.GetSceneData();
-        const uint32_t Count = InSceneManager.GetSceneStatistics().TotalObjectCount;
+        const uint32_t Count = InSceneManager.GetObjectCount();
         if (!SceneData || Count == 0) return false;
 
         float MinX = (std::numeric_limits<float>::max)();
@@ -245,6 +245,35 @@ int UApp::Run()
 
 void UApp::Update(float InDeltaTime)
 {
+	UpdateCamera(InDeltaTime);
+
+    UniformCullingAndRenderCollect();
+
+	UpdateFramePerformanceMetrics(InDeltaTime);
+	SceneManager->Update(InDeltaTime);
+	EditorLayer->Update(InDeltaTime);
+}
+
+void UApp::UniformCullingAndRenderCollect()
+{
+    if (SceneManager && SceneManager->GetGrid() != nullptr)
+    {
+        Math::FMatrix View = BuildCameraViewMatrix(CameraState);
+        Math::FMatrix Proj = BuildCameraProjectionMatrix(CameraState, ScreenWidth, ScreenHeight);
+
+        Math::FFrustum CameraFrustum;
+        CameraFrustum.Update(View, Proj);
+
+        DirectX::XMVECTOR CamPosVec = DirectX::XMLoadFloat3(&CameraState.Position);
+
+        // SceneManager->GetGrid()->CullingAndBuildRenderQueue_GridSort(CameraFrustum, CamPosVec);
+        SceneManager->GetGrid()->CullingAndBuildRenderQueue(CameraFrustum);
+        // SceneManager->GetGrid()->CullingAndBuildRenderQueue_ExactSort(CameraFrustum, CamPosVec);
+    }
+}
+
+/*void UApp::Update(float InDeltaTime)
+{
     UpdateCamera(InDeltaTime);
 
     if (SceneManager && SceneManager->GetSceneData() != nullptr)
@@ -264,7 +293,7 @@ void UApp::Update(float InDeltaTime)
     UpdateFramePerformanceMetrics(InDeltaTime);
     SceneManager->Update(InDeltaTime);
     EditorLayer->Update(InDeltaTime);
-}
+}*/
 
 void UApp::Render()
 {
@@ -317,8 +346,9 @@ void UApp::UpdateFramePerformanceMetrics(float InDeltaTime)
 
     const float AverageFPS = (TitleUpdateAccumulator > 0.0f) ? (static_cast<float>(TitleUpdateFrames) / TitleUpdateAccumulator) : 0.0f;
     const float AverageFrameMilliseconds = (TitleUpdateFrames > 0) ? ((TitleUpdateAccumulator * 1000.0f) / static_cast<float>(TitleUpdateFrames)) : 0.0f;
-    const uint32_t TotalObjects = SceneManager->GetSceneStatistics().TotalObjectCount;
-    const uint32_t VisibleObjects = (SceneManager->GetSceneData() != nullptr) ? SceneManager->GetSceneData()->RenderCount : 0;
+
+	const uint32_t TotalObjects = SceneManager->GetObjectCount();
+	const uint32_t VisibleObjects = SceneManager->GetVisibleObjectCount();
 
     std::wostringstream TitleStream;
     TitleStream.precision(2);
