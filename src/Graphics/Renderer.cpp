@@ -508,7 +508,7 @@ namespace Graphics
         if (FAILED(Device->CreateBuffer(&PerFrameDesc, nullptr, &PerFrameBuffer))) return false;
 
         D3D11_BUFFER_DESC PerObjectDesc = {};
-        PerObjectDesc.ByteWidth = sizeof(FPerObjectConstants);
+        PerObjectDesc.ByteWidth = 1024 * 1024; // 1MB Ring Buffer
         PerObjectDesc.Usage = D3D11_USAGE_DYNAMIC;
         PerObjectDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
         PerObjectDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
@@ -556,6 +556,8 @@ namespace Graphics
         Viewport.MinDepth = 0.0f;
         Viewport.MaxDepth = 1.0f;
         Context->RSSetViewports(1, &Viewport);
+
+        PerObjectRingBufferOffset = 0;
     }
 
     void URenderer::RenderScene(const Scene::USceneManager& InSceneManager)
@@ -640,6 +642,10 @@ namespace Graphics
         Context->PSSetConstantBuffers(0, 1, PerFrameBuffer.GetAddressOf());
         Context->PSSetSamplers(0, 1, DiffuseSamplerState.GetAddressOf());
 
+        const uint32_t PerObjectBufferSize = 65536;
+        const uint32_t ConstantSize = sizeof(FPerObjectConstants);
+        const uint32_t AlignedConstantSize = 256; // Hardware requirement for VSSetConstantBuffers1 offset
+
         for (uint32_t MeshID = 0; MeshID < MAX_MESH_TYPES; ++MeshID)
         {
             const std::vector<uint32_t>& Objects = Buckets[MeshID];
@@ -664,21 +670,39 @@ namespace Graphics
 
             for (uint32_t ObjectIndex : Objects)
             {
-                const Math::FPacked3x4Matrix& PackedMatrix = SceneData->WorldMatrices[ObjectIndex];
+                if (PerObjectRingBufferOffset + AlignedConstantSize > PerObjectBufferSize)
+                {
+                    PerObjectRingBufferOffset = 0;
+                }
 
+                D3D11_MAP MapType = (PerObjectRingBufferOffset == 0) ? D3D11_MAP_WRITE_DISCARD : D3D11_MAP_WRITE_NO_OVERWRITE;
+                
                 D3D11_MAPPED_SUBRESOURCE PerObjectMap = {};
-                if (FAILED(Context->Map(PerObjectBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &PerObjectMap))) continue;
+                if (FAILED(Context->Map(PerObjectBuffer.Get(), 0, MapType, 0, &PerObjectMap))) continue;
 
-                FPerObjectConstants PerObjectConstants = {};
-                DirectX::XMStoreFloat4(&PerObjectConstants.Row0, PackedMatrix.Row0);
-                DirectX::XMStoreFloat4(&PerObjectConstants.Row1, PackedMatrix.Row1);
-                DirectX::XMStoreFloat4(&PerObjectConstants.Row2, PackedMatrix.Row2);
-                PerObjectConstants.Padding = { 0.0f, 0.0f, 0.0f, 1.0f };
-                std::memcpy(PerObjectMap.pData, &PerObjectConstants, sizeof(PerObjectConstants));
+                const Math::FPacked3x4Matrix& PackedMatrix = SceneData->WorldMatrices[ObjectIndex];
+                FPerObjectConstants* Dest = reinterpret_cast<FPerObjectConstants*>(static_cast<uint8_t*>(PerObjectMap.pData) + PerObjectRingBufferOffset);
+                
+                DirectX::XMStoreFloat4(&Dest->Row0, PackedMatrix.Row0);
+                DirectX::XMStoreFloat4(&Dest->Row1, PackedMatrix.Row1);
+                DirectX::XMStoreFloat4(&Dest->Row2, PackedMatrix.Row2);
+                Dest->Padding = { 0.0f, 0.0f, 0.0f, 1.0f };
+                
                 Context->Unmap(PerObjectBuffer.Get(), 0);
 
-                Context->VSSetConstantBuffers(1, 1, PerObjectBuffer.GetAddressOf());
+                if (Context1)
+                {
+                    UINT OffsetInConstants = PerObjectRingBufferOffset / 16;
+                    UINT ConstantsCount = AlignedConstantSize / 16;
+                    Context1->VSSetConstantBuffers1(1, 1, PerObjectBuffer.GetAddressOf(), &OffsetInConstants, &ConstantsCount);
+                }
+                else
+                {
+                    Context->VSSetConstantBuffers(1, 1, PerObjectBuffer.GetAddressOf());
+                }
+
                 Context->DrawIndexed(MeshResource.IndexCount, 0, 0);
+                PerObjectRingBufferOffset += AlignedConstantSize;
             }
         }
     }

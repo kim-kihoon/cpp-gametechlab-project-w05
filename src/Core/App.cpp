@@ -267,17 +267,12 @@ void UApp::UniformCullingAndRenderCollect()
         Scene::FSceneDataSOA* SceneData = SceneManager->GetSceneData();
         SceneData->ResetRenderQueue();
 
-        // 1. Grid에게 "시야 안에 있는 애들 목록 좀 줘" 라고 요청 (결과를 RenderQueue 배열에 바로 받음)
         SceneManager->GetGrid()->QueryFrustum(
             CameraFrustum,
             SceneData->RenderQueue.data(),
             SceneData->RenderCount,
             Scene::FSceneDataSOA::MAX_OBJECTS
         );
-
-        // SceneManager->GetGrid()->CullingAndBuildRenderQueue_GridSort(CameraFrustum, CamPosVec);
-        SceneManager->GetGrid()->CullingAndBuildRenderQueue(CameraFrustum);
-        // SceneManager->GetGrid()->CullingAndBuildRenderQueue_ExactSort(CameraFrustum, CamPosVec);
     }
 }
 

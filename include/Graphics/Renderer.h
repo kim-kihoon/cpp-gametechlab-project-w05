@@ -63,6 +63,7 @@ namespace Graphics
         std::array<FMeshResource, MAX_MESH_TYPES> MeshResources = {};
         uint32_t ViewportWidth = 0;
         uint32_t ViewportHeight = 0;
+        uint32_t PerObjectRingBufferOffset = 0;
         FCameraState CameraState = {};
 
         FDebugRenderSettings DebugSettings;
