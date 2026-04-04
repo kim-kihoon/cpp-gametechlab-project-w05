@@ -596,6 +596,15 @@ namespace Graphics
         D3D11_SUBRESOURCE_DATA BBIData = { BBIndices, 0, 0 };
         if (FAILED(Device->CreateBuffer(&BBIBDesc, &BBIData, &BillboardIB))) return false;
 
+        // Bake 전용 - 작은 사이즈, 공유 안 함
+        D3D11_BUFFER_DESC BakeFrameDesc = { sizeof(FPerFrameConstants), D3D11_USAGE_DYNAMIC,
+            D3D11_BIND_CONSTANT_BUFFER, D3D11_CPU_ACCESS_WRITE, 0, 0 };
+        Device->CreateBuffer(&BakeFrameDesc, nullptr, &BakePerFrameBuffer);
+
+        D3D11_BUFFER_DESC BakeObjDesc = { sizeof(FPerObjectConstants), D3D11_USAGE_DYNAMIC,
+            D3D11_BIND_CONSTANT_BUFFER, D3D11_CPU_ACCESS_WRITE, 0, 0 };
+        Device->CreateBuffer(&BakeObjDesc, nullptr, &BakePerObjectBuffer);
+
         if (!MeshResources[0].DiffuseTextureView) MeshResources[0].DiffuseTextureView = DefaultWhiteTextureView;
         if (!MeshResources[1].DiffuseTextureView) MeshResources[1].DiffuseTextureView = DefaultWhiteTextureView;
 
@@ -675,14 +684,14 @@ namespace Graphics
             FPerFrameConstants pf = {}; DirectX::XMStoreFloat4x4(&pf.ViewProj, view * proj);
             std::memcpy(m.pData, &pf, sizeof(pf)); Context->Unmap(PerFrameBuffer.Get(), 0);
         }
-        if (SUCCEEDED(Context->Map(PerObjectBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &m))) {
+        if (SUCCEEDED(Context->Map(BakePerObjectBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &m))) {
             FPerObjectConstants po = {};
             DirectX::XMMATRIX ShaderMat = DirectX::XMMatrixTranspose(objMat);
             DirectX::XMStoreFloat4(&po.Row0, ShaderMat.r[0]);
             DirectX::XMStoreFloat4(&po.Row1, ShaderMat.r[1]);
             DirectX::XMStoreFloat4(&po.Row2, ShaderMat.r[2]);
             po.Padding = { 0, 0, 0, 1 };
-            std::memcpy(m.pData, &po, sizeof(po)); Context->Unmap(PerObjectBuffer.Get(), 0);
+            std::memcpy(m.pData, &po, sizeof(po)); Context->Unmap(BakePerObjectBuffer.Get(), 0);
         }
         if (SUCCEEDED(Context->Map(MaterialBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &m))) {
             FMaterialConstants mc = { { 1, 1, 1, 1 } };
@@ -694,7 +703,7 @@ namespace Graphics
         Context->VSSetShader(VertexShader.Get(), nullptr, 0);
         Context->PSSetShader(PixelShader.Get(), nullptr, 0);
         Context->VSSetConstantBuffers(0, 1, PerFrameBuffer.GetAddressOf());
-        Context->VSSetConstantBuffers(1, 1, PerObjectBuffer.GetAddressOf());
+        Context->VSSetConstantBuffers(1, 1, BakePerObjectBuffer.GetAddressOf());
         Context->PSSetConstantBuffers(2, 1, MaterialBuffer.GetAddressOf());
         Context->PSSetSamplers(0, 1, DiffuseSamplerState.GetAddressOf());
         

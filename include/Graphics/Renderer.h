@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include <Graphics/RendererTypes.h>
 #include <DirectXMath.h>
 #include <array>
@@ -104,6 +104,9 @@ namespace Graphics
         FCameraState CameraState = {};
 
         FDebugRenderSettings DebugSettings;
+        ComPtr<ID3D11Buffer> BakePerFrameBuffer;
+        ComPtr<ID3D11Buffer> BakePerObjectBuffer;
+        ComPtr<ID3D11Buffer> BakeMatBuffer;
 
         void BakeImpostor(uint32_t MeshID);
     };
