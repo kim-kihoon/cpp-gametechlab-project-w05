@@ -47,7 +47,7 @@ namespace Scene
         const FSceneDataSOA* GetSceneData() const { return SceneData.get(); }
         UUniformGrid* GetGrid() { return Grid.get(); }
 		const UUniformGrid* GetGrid() const { return Grid.get(); }
-		const FSceneStatistics& GetSceneStatistics() const;
+        FSceneStatistics GetSceneStatistics() const;
         const FSceneSelectionData& GetSelectionData() const { return SelectionData; }
         uint32_t GetVisibleObjectCount() const { return SceneData ? SceneData->RenderCount : 0; }
 

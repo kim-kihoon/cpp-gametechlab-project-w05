@@ -29,9 +29,14 @@ namespace Scene
         FSceneDataSOA* SceneData;
 
         /** [Zero-Alloc] 모든 셀의 인덱스를 통합 관리하는 거대 버퍼 */
-        static constexpr uint32_t MAX_GRID_ENTRIES = FSceneDataSOA::MAX_OBJECTS * 4;
+        static constexpr uint32_t MAX_GRID_ENTRIES = FSceneDataSOA::MAX_OBJECTS * 8;
         std::array<uint32_t, MAX_GRID_ENTRIES> GlobalIndexBuffer;
+        std::array<uint32_t, FSceneDataSOA::MAX_OBJECTS> VisitTokens = {};
+        uint32_t CurrentVisitToken = 1;
         uint32_t TotalEntryCount = 0;
+
+        void ReconfigureToSceneBounds();
+        void FallbackToSingleCell();
 
     public:
         UUniformGrid(int InW, int InH, int InD, float InCellSize, FSceneDataSOA* InSceneData);
@@ -43,10 +48,6 @@ namespace Scene
 
         // void InsertObject(uint32_t ObjectIndex);
         void QueryFrustum(const Math::FFrustum& Frustum, uint32_t* OutIndices, uint32_t& OutCount, uint32_t MaxCapacity);
-
-        // void CullingAndBuildRenderQueue_ExactSort(const Math::FFrustum& Frustum, const Math::FVector& CameraPosVec);
-        void CullingAndBuildRenderQueue_GridSort(const Math::FFrustum& Frustum, const Math::FVector& CameraPosVec);
-        void CullingAndBuildRenderQueue(const Math::FFrustum& Frustum);
 
         bool Raycast(const Math::FRay& Ray, float MaxDistance, uint32_t& OutHitIndex, float& OutHitDistance);
     };
