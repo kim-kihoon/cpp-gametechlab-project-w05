@@ -647,7 +647,7 @@ namespace Graphics
         float cz = (minZ + maxZ) * 0.5f;
 
         DirectX::XMMATRIX objMat = DirectX::XMMatrixTranslation(-cx, -cy, -cz);
-        if (MeshID == 1) objMat *= DirectX::XMMatrixRotationZ(DirectX::XM_PI);
+        if (MeshID == 1) objMat *= DirectX::XMMatrixRotationY(DirectX::XM_PI);
 
         // 4. 카메라 세팅 (넉넉한 2.5 화각)
         float OrthoSize = 2.5f; 
@@ -669,7 +669,7 @@ namespace Graphics
         Context->RSSetState(DefaultRasterizerState.Get());
         Context->OMSetDepthStencilState(DefaultDepthStencilState.Get(), 0);
         
-        // 6. 상수 버퍼 업데이트
+        // 6. 상수 버퍼 업데이트 (전치(Transpose)하여 3x4 포맷으로 변환)
         D3D11_MAPPED_SUBRESOURCE m = {};
         if (SUCCEEDED(Context->Map(PerFrameBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &m))) {
             FPerFrameConstants pf = {}; DirectX::XMStoreFloat4x4(&pf.ViewProj, view * proj);
@@ -677,9 +677,10 @@ namespace Graphics
         }
         if (SUCCEEDED(Context->Map(PerObjectBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &m))) {
             FPerObjectConstants po = {};
-            DirectX::XMStoreFloat4(&po.Row0, objMat.r[0]);
-            DirectX::XMStoreFloat4(&po.Row1, objMat.r[1]);
-            DirectX::XMStoreFloat4(&po.Row2, objMat.r[2]);
+            DirectX::XMMATRIX ShaderMat = DirectX::XMMatrixTranspose(objMat);
+            DirectX::XMStoreFloat4(&po.Row0, ShaderMat.r[0]);
+            DirectX::XMStoreFloat4(&po.Row1, ShaderMat.r[1]);
+            DirectX::XMStoreFloat4(&po.Row2, ShaderMat.r[2]);
             po.Padding = { 0, 0, 0, 1 };
             std::memcpy(m.pData, &po, sizeof(po)); Context->Unmap(PerObjectBuffer.Get(), 0);
         }
