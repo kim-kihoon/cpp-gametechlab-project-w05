@@ -1,4 +1,4 @@
-#include <UI/EditorLayer.h>
+﻿#include <UI/EditorLayer.h>
 #include <Graphics/Renderer.h>
 #include <Scene/SceneManager.h>
 #include <cwchar>
@@ -146,7 +146,7 @@ namespace UI
     void UEditorLayer::RefreshFrameSnapshot()
     {
         if (!Dependencies.SceneManager) return;
-        const Scene::FSceneStatistics& Statistics = Dependencies.SceneManager->GetSceneStatistics();
+        const Scene::FSceneStatistics Statistics = Dependencies.SceneManager->GetSceneStatistics();
         const Scene::FSceneSelectionData& SelectionData = Dependencies.SceneManager->GetSelectionData();
         FrameData.TotalObjectCount = Statistics.TotalObjectCount;
         FrameData.VisibleObjectCount = Statistics.VisibleObjectCount;

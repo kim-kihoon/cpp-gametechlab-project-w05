@@ -266,6 +266,7 @@ void UApp::UniformCullingAndRenderCollect()
 
         Scene::FSceneDataSOA* SceneData = SceneManager->GetSceneData();
         SceneData->ResetRenderQueue();
+        SceneData->IsVisible.fill(false);
 
         SceneManager->GetGrid()->QueryFrustum(
             CameraFrustum,
@@ -273,31 +274,13 @@ void UApp::UniformCullingAndRenderCollect()
             SceneData->RenderCount,
             Scene::FSceneDataSOA::MAX_OBJECTS
         );
+
+        for (uint32_t QueueIndex = 0; QueueIndex < SceneData->RenderCount; ++QueueIndex)
+        {
+            SceneData->IsVisible[SceneData->RenderQueue[QueueIndex]] = true;
+        }
     }
 }
-
-/*void UApp::Update(float InDeltaTime)
-{
-    UpdateCamera(InDeltaTime);
-
-    if (SceneManager && SceneManager->GetSceneData() != nullptr)
-    {
-        Scene::FSceneDataSOA* SceneData = SceneManager->GetSceneData();
-        SceneData->ResetRenderQueue();
-
-        const uint32_t TotalObjectCount = SceneManager->GetSceneStatistics().TotalObjectCount;
-        for (uint32_t ObjectIndex = 0; ObjectIndex < TotalObjectCount; ++ObjectIndex)
-        {
-            SceneData->AddToRenderQueue(ObjectIndex);
-        }
-
-        SceneManager->SetVisibleObjectCount(TotalObjectCount);
-    }
-
-    UpdateFramePerformanceMetrics(InDeltaTime);
-    SceneManager->Update(InDeltaTime);
-    EditorLayer->Update(InDeltaTime);
-}*/
 
 void UApp::Render()
 {
@@ -359,7 +342,7 @@ void UApp::UpdateFramePerformanceMetrics(float InDeltaTime)
     TitleStream << std::fixed
                 << L"Verstappen Engine | Scene Preview | FPS(avg): " << AverageFPS
                 << L" | Frame(ms): " << AverageFrameMilliseconds
-                << L" | Visible: " << VisibleObjects
+                << L" | FrustumVisible: " << VisibleObjects
                 << L"/" << TotalObjects;
     ::SetWindowTextW(WindowHandle, TitleStream.str().c_str());
 

@@ -15,19 +15,13 @@
 #include <fstream>
 #include <sstream>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 namespace Graphics
 {
     namespace
     {
-        struct FMeshVertex
-        {
-            DirectX::XMFLOAT3 Position;
-            DirectX::XMFLOAT3 Normal;
-            DirectX::XMFLOAT2 TexCoord;
-        };
-
         struct FPerFrameConstants
         {
             DirectX::XMFLOAT4X4 ViewProj;
@@ -44,6 +38,31 @@ namespace Graphics
         struct FMaterialConstants
         {
             DirectX::XMFLOAT4 BaseColor;
+        };
+
+        struct FObjVertexKey
+        {
+            int PositionIndex = -1;
+            int TexCoordIndex = -1;
+            int NormalIndex = -1;
+
+            bool operator==(const FObjVertexKey& InOther) const
+            {
+                return PositionIndex == InOther.PositionIndex &&
+                       TexCoordIndex == InOther.TexCoordIndex &&
+                       NormalIndex == InOther.NormalIndex;
+            }
+        };
+
+        struct FObjVertexKeyHasher
+        {
+            size_t operator()(const FObjVertexKey& InKey) const noexcept
+            {
+                const size_t PositionHash = std::hash<int>{}(InKey.PositionIndex);
+                const size_t TexCoordHash = std::hash<int>{}(InKey.TexCoordIndex);
+                const size_t NormalHash = std::hash<int>{}(InKey.NormalIndex);
+                return PositionHash ^ (TexCoordHash << 1) ^ (NormalHash << 2);
+            }
         };
 
         bool ParseObjFaceIndices(const std::string& InToken, int& OutPositionIndex, int& OutTexCoordIndex, int& OutNormalIndex)
@@ -109,7 +128,7 @@ namespace Graphics
 
         bool LoadObjMeshData(
             const std::wstring& InPath,
-            std::vector<FMeshVertex>& OutVertices,
+            std::vector<URenderer::FMeshVertex>& OutVertices,
             std::vector<uint32_t>& OutIndices,
             std::wstring& OutDiffuseTexturePath)
         {
@@ -119,6 +138,7 @@ namespace Graphics
             std::vector<DirectX::XMFLOAT3> Positions;
             std::vector<DirectX::XMFLOAT3> Normals;
             std::vector<DirectX::XMFLOAT2> TexCoords;
+            std::unordered_map<FObjVertexKey, uint32_t, FObjVertexKeyHasher> VertexMap;
             std::filesystem::path MaterialLibraryPath;
             std::string Line;
 
@@ -178,23 +198,30 @@ namespace Graphics
 
                         for (const std::string& FaceToken : TriangleTokens)
                         {
-                            int PositionIndex = -1;
-                            int TexCoordIndex = -1;
-                            int NormalIndex = -1;
-                            if (!ParseObjFaceIndices(FaceToken, PositionIndex, TexCoordIndex, NormalIndex)) continue;
-                            if (PositionIndex < 0 || static_cast<size_t>(PositionIndex) >= Positions.size()) continue;
+                            FObjVertexKey Key = {};
+                            if (!ParseObjFaceIndices(FaceToken, Key.PositionIndex, Key.TexCoordIndex, Key.NormalIndex)) continue;
+                            if (Key.PositionIndex < 0 || static_cast<size_t>(Key.PositionIndex) >= Positions.size()) continue;
 
-                            FMeshVertex Vertex = {};
-                            Vertex.Position = Positions[PositionIndex];
-                            Vertex.Normal = (NormalIndex >= 0 && static_cast<size_t>(NormalIndex) < Normals.size())
-                                ? Normals[NormalIndex]
+                            const auto ExistingVertex = VertexMap.find(Key);
+                            if (ExistingVertex != VertexMap.end())
+                            {
+                                OutIndices.push_back(ExistingVertex->second);
+                                continue;
+                            }
+
+                            URenderer::FMeshVertex Vertex = {};
+                            Vertex.Position = Positions[Key.PositionIndex];
+                            Vertex.Normal = (Key.NormalIndex >= 0 && static_cast<size_t>(Key.NormalIndex) < Normals.size())
+                                ? Normals[Key.NormalIndex]
                                 : DirectX::XMFLOAT3{ 0.0f, 0.0f, 1.0f };
-                            Vertex.TexCoord = (TexCoordIndex >= 0 && static_cast<size_t>(TexCoordIndex) < TexCoords.size())
-                                ? TexCoords[TexCoordIndex]
+                            Vertex.TexCoord = (Key.TexCoordIndex >= 0 && static_cast<size_t>(Key.TexCoordIndex) < TexCoords.size())
+                                ? TexCoords[Key.TexCoordIndex]
                                 : DirectX::XMFLOAT2{ 0.0f, 0.0f };
 
+                            const uint32_t VertexIndex = static_cast<uint32_t>(OutVertices.size());
                             OutVertices.push_back(Vertex);
-                            OutIndices.push_back(static_cast<uint32_t>(OutIndices.size()));
+                            OutIndices.push_back(VertexIndex);
+                            VertexMap.emplace(Key, VertexIndex);
                         }
                     }
                 }
@@ -310,39 +337,37 @@ namespace Graphics
             return SUCCEEDED(InDevice->CreateShaderResourceView(Texture.Get(), nullptr, &OutTextureView));
         }
 
-        bool CreateMeshBuffers(
+        bool LoadMeshResource(
             ID3D11Device* InDevice,
             const std::wstring& InPath,
             URenderer::FMeshResource& OutMeshResource)
         {
-            std::vector<FMeshVertex> Vertices;
-            std::vector<uint32_t> Indices;
-            std::wstring DiffuseTexturePath;
-            if (!LoadObjMeshData(InPath, Vertices, Indices, DiffuseTexturePath))
+            if (!LoadObjMeshData(InPath, OutMeshResource.SourceVertices, OutMeshResource.SourceIndices, OutMeshResource.DiffuseTexturePath))
             {
                 return false;
             }
 
             D3D11_BUFFER_DESC VertexBufferDesc = {};
-            VertexBufferDesc.ByteWidth = static_cast<UINT>(Vertices.size() * sizeof(FMeshVertex));
+            VertexBufferDesc.ByteWidth = static_cast<UINT>(OutMeshResource.SourceVertices.size() * sizeof(URenderer::FMeshVertex));
             VertexBufferDesc.Usage = D3D11_USAGE_DEFAULT;
             VertexBufferDesc.BindFlags = D3D11_BIND_VERTEX_BUFFER;
-            D3D11_SUBRESOURCE_DATA VertexData = { Vertices.data(), 0, 0 };
+            D3D11_SUBRESOURCE_DATA VertexData = { OutMeshResource.SourceVertices.data(), 0, 0 };
             if (FAILED(InDevice->CreateBuffer(&VertexBufferDesc, &VertexData, &OutMeshResource.VertexBuffer))) return false;
 
             D3D11_BUFFER_DESC IndexBufferDesc = {};
-            IndexBufferDesc.ByteWidth = static_cast<UINT>(Indices.size() * sizeof(uint32_t));
+            IndexBufferDesc.ByteWidth = static_cast<UINT>(OutMeshResource.SourceIndices.size() * sizeof(uint32_t));
             IndexBufferDesc.Usage = D3D11_USAGE_DEFAULT;
             IndexBufferDesc.BindFlags = D3D11_BIND_INDEX_BUFFER;
-            D3D11_SUBRESOURCE_DATA IndexData = { Indices.data(), 0, 0 };
+            D3D11_SUBRESOURCE_DATA IndexData = { OutMeshResource.SourceIndices.data(), 0, 0 };
             if (FAILED(InDevice->CreateBuffer(&IndexBufferDesc, &IndexData, &OutMeshResource.IndexBuffer))) return false;
 
-            if (!DiffuseTexturePath.empty() && !LoadTextureWithWIC(InDevice, DiffuseTexturePath, OutMeshResource.DiffuseTextureView))
+            if (!OutMeshResource.DiffuseTexturePath.empty() &&
+                !LoadTextureWithWIC(InDevice, OutMeshResource.DiffuseTexturePath, OutMeshResource.DiffuseTextureView))
             {
                 return false;
             }
 
-            OutMeshResource.IndexCount = static_cast<uint32_t>(Indices.size());
+            OutMeshResource.IndexCount = static_cast<uint32_t>(OutMeshResource.SourceIndices.size());
             return true;
         }
     }
@@ -499,8 +524,8 @@ namespace Graphics
         if (!CreateSolidTexture(Device.Get(), { 1.0f, 1.0f, 1.0f, 1.0f }, DefaultWhiteTextureView)) return false;
 
         const std::wstring MeshBasePath = Core::FPathManager::GetMeshPath();
-        if (!CreateMeshBuffers(Device.Get(), MeshBasePath + L"apple_mid.obj", MeshResources[0])) return false;
-        if (!CreateMeshBuffers(Device.Get(), MeshBasePath + L"bitten_apple_mid.obj", MeshResources[1])) return false;
+        if (!LoadMeshResource(Device.Get(), MeshBasePath + L"apple_mid.obj", MeshResources[0])) return false;
+        if (!LoadMeshResource(Device.Get(), MeshBasePath + L"bitten_apple_mid.obj", MeshResources[1])) return false;
         if (!MeshResources[0].DiffuseTextureView) MeshResources[0].DiffuseTextureView = DefaultWhiteTextureView;
         if (!MeshResources[1].DiffuseTextureView) MeshResources[1].DiffuseTextureView = DefaultWhiteTextureView;
 

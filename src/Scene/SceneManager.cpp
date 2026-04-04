@@ -18,10 +18,9 @@ namespace Scene
     void USceneManager::Initialize()
     {
         SceneData = std::make_unique<FSceneDataSOA>();
-        
-        // 50x50x20 정형 배치를 위한 그리드 초기화
-        // 월드 크기에 따라 CellSize 조정 필요 (예: 사과 간격이 2.0이면 CellSize는 10.0 정도가 적당)
-        Grid = std::make_unique<UUniformGrid>(50, 50, 20, 10.0f, SceneData.get());
+
+        // 실제 씬 bounds를 읽은 뒤 BuildGrid()가 차원과 셀 크기를 다시 결정한다.
+        Grid = std::make_unique<UUniformGrid>(1, 1, 1, 4.0f, SceneData.get());
         
         ResetScene();
     }
@@ -163,6 +162,7 @@ namespace Scene
         File.read(reinterpret_cast<char*>(SceneData->MaterialIDs.data()), sizeof(uint32_t) * Count);
 
         SceneData->TotalObjectCount = Count;
+        if (Grid) Grid->BuildGrid();
         return File.good();
     }
 
@@ -179,15 +179,15 @@ namespace Scene
 
     void USceneManager::ClearSelection() { ResetSelectionState(); }
 
-    const FSceneStatistics& USceneManager::GetSceneStatistics() const
+    FSceneStatistics USceneManager::GetSceneStatistics() const
     {
-		FSceneStatistics Stats;
-		if (SceneData)
-		{
-			Stats.TotalObjectCount = SceneData->TotalObjectCount;
-			Stats.VisibleObjectCount = SceneData->RenderCount;
-		}
-		return Stats;
+        FSceneStatistics Stats;
+        if (SceneData)
+        {
+            Stats.TotalObjectCount = SceneData->TotalObjectCount;
+            Stats.VisibleObjectCount = SceneData->RenderCount;
+        }
+        return Stats;
     }
 
     void USceneManager::ResetSelectionState() { SelectionData = {}; }
