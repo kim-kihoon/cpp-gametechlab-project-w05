@@ -110,7 +110,80 @@ namespace Scene
         }
     }
 
-	/*void UUniformGrid::CullingAndBuildRenderQueue_ExactSort(const Math::FFrustum& Frustum,
+    void UUniformGrid::QueryFrustum(const Math::FFrustum& Frustum, uint32_t* OutIndices, uint32_t& OutCount, uint32_t MaxCapacity)
+    {
+        if (!SceneData) return;
+
+        OutCount = 0;
+
+        std::vector<bool> Visited(SceneData->TotalObjectCount, false);
+
+        const int MinGridX = std::clamp(static_cast<int>((Frustum.AABBMin.x - OriginX) * InvCellSize), 0, Width - 1);
+        const int MinGridY = std::clamp(static_cast<int>((Frustum.AABBMin.y - OriginY) * InvCellSize), 0, Height - 1);
+        const int MinGridZ = std::clamp(static_cast<int>((Frustum.AABBMin.z - OriginZ) * InvCellSize), 0, Depth - 1);
+
+        const int MaxGridX = std::clamp(static_cast<int>((Frustum.AABBMax.x - OriginX) * InvCellSize), 0, Width - 1);
+        const int MaxGridY = std::clamp(static_cast<int>((Frustum.AABBMax.y - OriginY) * InvCellSize), 0, Height - 1);
+        const int MaxGridZ = std::clamp(static_cast<int>((Frustum.AABBMax.z - OriginZ) * InvCellSize), 0, Depth - 1);
+
+        for (int z = MinGridZ; z <= MaxGridZ; z++)
+        {
+            for (int y = MinGridY; y <= MaxGridY; y++)
+            {
+                for (int x = MinGridX; x <= MaxGridX; x++)
+                {
+                    const FGridCell& Cell = Cells[x + (y * Width) + (z * Width * Height)];
+                    if (Cell.Count == 0) continue;
+
+                    Math::ECullingResult CellResult = Frustum.TestBox(Cell.CellBox);
+                    if (CellResult == Math::ECullingResult::Outside) continue;
+
+                    const uint32_t* Indices = &GlobalIndexBuffer[Cell.StartIndex];
+
+                    if (CellResult == Math::ECullingResult::FullyInside)
+                    {
+                        for (uint32_t i = 0; i < Cell.Count; i++)
+                        {
+                            const uint32_t Index = Indices[i];
+
+                            if (!Visited[Index])
+                            {
+                                Visited[Index] = true; 
+
+                                if (OutCount < MaxCapacity) 
+                                {
+                                    OutIndices[OutCount++] = Index;
+                                }
+                            }
+                        }
+                    }
+                    else
+                    {
+                        for (uint32_t i = 0; i < Cell.Count; i++)
+                        {
+                            const uint32_t Index = Indices[i];
+
+                            if (Visited[Index]) continue;
+
+                            if (Frustum.TestBox(SceneData->MinX[Index], SceneData->MinY[Index], SceneData->MinZ[Index],
+                                SceneData->MaxX[Index], SceneData->MaxY[Index], SceneData->MaxZ[Index])
+                                != Math::ECullingResult::Outside)
+                            {
+                                Visited[Index] = true;
+
+                                if (OutCount < MaxCapacity)
+                                {
+                                    OutIndices[OutCount++] = Index;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /*void UUniformGrid::CullingAndBuildRenderQueue_ExactSort(const Math::FFrustum& Frustum,
 		const Math::FVector& CameraPosVec)
 	{
 		if (!SceneData) return;

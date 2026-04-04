@@ -42,6 +42,7 @@ namespace Scene
         void BuildGrid();
 
         // void InsertObject(uint32_t ObjectIndex);
+        void QueryFrustum(const Math::FFrustum& Frustum, uint32_t* OutIndices, uint32_t& OutCount, uint32_t MaxCapacity);
 
         // void CullingAndBuildRenderQueue_ExactSort(const Math::FFrustum& Frustum, const Math::FVector& CameraPosVec);
         void CullingAndBuildRenderQueue_GridSort(const Math::FFrustum& Frustum, const Math::FVector& CameraPosVec);
