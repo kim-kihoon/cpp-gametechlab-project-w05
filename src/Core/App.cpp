@@ -4,6 +4,7 @@
 #include <Scene/AssetLoader.h>
 #include <Scene/SceneData.h>
 #include <Scene/SceneManager.h>
+#include <Math/MathTypes.h>
 #include <Scene/SceneSerializer.h>
 #include <UI/EditorLayer.h>
 #include <algorithm>
@@ -137,6 +138,26 @@ namespace
         InOutCameraState.FarClip = (std::max)(InOutCameraState.FarClip, CameraDistance + BoundingRadius + 16.0f);
         InOutCameraState.NearClip = 0.1f;
     }
+
+    Math::FRay CalculatePickingRay(const Graphics::FCameraState& Camera, int MouseX, int MouseY, int ScreenWidth, int ScreenHeight)
+    {
+        float ptX = (2.0f * static_cast<float>(MouseX)) / static_cast<float>(ScreenWidth) - 1.0f;
+        float ptY = 1.0f - (2.0f * static_cast<float>(MouseY)) / static_cast<float>(ScreenHeight);
+
+        Math::FMatrix view = BuildCameraViewMatrix(Camera);
+        Math::FMatrix proj = BuildCameraProjectionMatrix(Camera, ScreenWidth, ScreenHeight);
+        DirectX::XMMATRIX invViewProj = DirectX::XMMatrixInverse(nullptr, view * proj);
+
+        DirectX::XMVECTOR nearPtVec = DirectX::XMVector3TransformCoord(DirectX::XMVectorSet(ptX, ptY, 0.0f, 1.0f), invViewProj);
+        DirectX::XMVECTOR farPtVec = DirectX::XMVector3TransformCoord(DirectX::XMVectorSet(ptX, ptY, 1.0f, 1.0f), invViewProj);
+        DirectX::XMVECTOR dirVec = DirectX::XMVectorSubtract(farPtVec, nearPtVec);
+
+        DirectX::XMFLOAT3 origin, direction;
+        DirectX::XMStoreFloat3(&origin, nearPtVec);
+        DirectX::XMStoreFloat3(&direction, dirVec);
+
+        return Math::FRay(origin, direction);
+    }
 }
 
 UApp::UApp()
@@ -250,6 +271,8 @@ void UApp::Update(float InDeltaTime)
     UniformCullingAndRenderCollect();
 
 	UpdateFramePerformanceMetrics(InDeltaTime);
+
+    Picking();
 	SceneManager->Update(InDeltaTime);
 	EditorLayer->Update(InDeltaTime);
 }
@@ -279,6 +302,26 @@ void UApp::UniformCullingAndRenderCollect()
         {
             SceneData->IsVisible[SceneData->RenderQueue[QueueIndex]] = true;
         }
+    }
+}
+
+void UApp::Picking()
+{
+    if (bPendingPick && SceneManager && SceneManager->GetGrid())
+    {
+        Math::FRay Ray = CalculatePickingRay(CameraState, PickPosition.x, PickPosition.y, ScreenWidth, ScreenHeight);
+
+        uint32_t HitIndex = 0;
+        float HitDistance = 0.0f;
+        if (SceneManager->GetGrid()->Raycast(Ray, 1000.0f, HitIndex, HitDistance))
+        {
+            SceneManager->SelectObject(HitIndex);
+        }
+        else
+        {
+            SceneManager->ClearSelection();
+        }
+        bPendingPick = false;
     }
 }
 
@@ -367,6 +410,14 @@ LRESULT CALLBACK UApp::WindowProc(HWND hWnd, UINT Message, WPARAM wParam, LPARAM
             AppInstance->LastMousePosition.x = GET_X_LPARAM(lParam);
             AppInstance->LastMousePosition.y = GET_Y_LPARAM(lParam);
             ::SetCapture(hWnd);
+        }
+        return 0;
+    case WM_LBUTTONDOWN:
+        if (AppInstance != nullptr)
+        {
+            AppInstance->bPendingPick = true;
+            AppInstance->PickPosition.x = GET_X_LPARAM(lParam);
+            AppInstance->PickPosition.y = GET_Y_LPARAM(lParam);
         }
         return 0;
     case WM_RBUTTONUP:

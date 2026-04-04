@@ -26,6 +26,7 @@ private:
     static LRESULT CALLBACK WindowProc(HWND hWnd, UINT message, WPARAM wParam, LPARAM lParam);
     void Update(float DeltaTime);
     void UniformCullingAndRenderCollect();
+    void Picking();
     void Render();
     void UpdateFramePerformanceMetrics(float InDeltaTime);
     void UpdateCamera(float InDeltaTime);
@@ -47,5 +48,7 @@ private:
     bool bIsRightMouseLooking = false;
     POINT LastMousePosition = {};
     bool bIsCOMInitialized = false;
+    bool bPendingPick = false;
+    POINT PickPosition = { 0, 0 };
     Core::FFramePerformanceMetrics FramePerformanceMetrics;
 };

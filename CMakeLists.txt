@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.15)
+﻿cmake_minimum_required(VERSION 3.15)
 project(cpp-gametechlab-project-w05)
 
 set(CMAKE_CXX_STANDARD 20)
@@ -19,7 +19,7 @@ set(IMGUI_SOURCES
     "ImGui/imgui_impl_win32.cpp"
 )
 
-add_executable(VerstappenEngine WIN32 ${SOURCES} ${IMGUI_SOURCES})
+add_executable(VerstappenEngine WIN32 ${SOURCES} ${IMGUI_SOURCES} "include/Graphics/DebugLine.h" "src/Graphics/DebugLine.cpp")
 
 target_include_directories(VerstappenEngine PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/include"

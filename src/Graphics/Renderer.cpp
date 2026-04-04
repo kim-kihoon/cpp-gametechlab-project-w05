@@ -32,7 +32,7 @@ namespace Graphics
             DirectX::XMFLOAT4 Row0;
             DirectX::XMFLOAT4 Row1;
             DirectX::XMFLOAT4 Row2;
-            DirectX::XMFLOAT4 Padding;
+            DirectX::XMFLOAT4 ColorModifier;
         };
 
         struct FMaterialConstants
@@ -49,8 +49,8 @@ namespace Graphics
             bool operator==(const FObjVertexKey& InOther) const
             {
                 return PositionIndex == InOther.PositionIndex &&
-                       TexCoordIndex == InOther.TexCoordIndex &&
-                       NormalIndex == InOther.NormalIndex;
+                    TexCoordIndex == InOther.TexCoordIndex &&
+                    NormalIndex == InOther.NormalIndex;
             }
         };
 
@@ -447,7 +447,7 @@ namespace Graphics
                 float4 Row0;
                 float4 Row1;
                 float4 Row2;
-                float4 Padding;
+                float4 ColorModifier;
             };
 
             cbuffer MaterialData : register(b2)
@@ -469,6 +469,7 @@ namespace Graphics
             {
                 float4 Pos : SV_POSITION;
                 float2 TexCoord : TEXCOORD0;
+                float HighlightRed : COLOR;
             };
 
             PS_IN VSMain(VS_IN i)
@@ -478,12 +479,15 @@ namespace Graphics
                 float3 WorldPos = float3(dot(LocalPos, Row0), dot(LocalPos, Row1), dot(LocalPos, Row2));
                 o.Pos = mul(float4(WorldPos, 1.0f), ViewProj);
                 o.TexCoord = i.TexCoord;
+                
+                o.HighlightRed = ColorModifier.x; 
                 return o;
             }
 
             float4 PSMain(PS_IN i) : SV_TARGET
             {
-                return DiffuseTexture.Sample(DiffuseSampler, i.TexCoord) * BaseColor;
+                float4 BaseColorTarget = DiffuseTexture.Sample(DiffuseSampler, i.TexCoord) * BaseColor;
+                return BaseColorTarget + float4(i.HighlightRed, 0.0f, 0.0f, 0.0f); 
             }
         )";
 
@@ -545,6 +549,8 @@ namespace Graphics
     void URenderer::RenderScene(const Scene::USceneManager& InSceneManager)
     {
         const Scene::FSceneDataSOA* SceneData = InSceneManager.GetSceneData();
+        const Scene::FSceneSelectionData& Selection = InSceneManager.GetSelectionData();
+        const uint32_t SelectedObjID = Selection.bHasSelection ? Selection.ObjectIndex : 0xFFFFFFFF;
         if (!SceneData || !PerFrameBuffer || !PerObjectBuffer || !MaterialBuffer) return;
 
         const uint32_t SourceCount = SceneData->RenderCount;
@@ -575,7 +581,10 @@ namespace Graphics
                 const Math::FPacked3x4Matrix& mat = SceneData->WorldMatrices[oid];
                 FPerObjectConstants* dest = reinterpret_cast<FPerObjectConstants*>(DestStart + (sidx * AlignedConstantSize));
                 DirectX::XMStoreFloat4(&dest->Row0, mat.Row0); DirectX::XMStoreFloat4(&dest->Row1, mat.Row1);
-                DirectX::XMStoreFloat4(&dest->Row2, mat.Row2); dest->Padding = { 0, 0, 0, 1 };
+                DirectX::XMStoreFloat4(&dest->Row2, mat.Row2);
+                dest->ColorModifier = (oid == SelectedObjID)
+                    ? DirectX::XMFLOAT4{ 0.5f, 0.0f, 0.0f, 0.0f }
+                : DirectX::XMFLOAT4{ 0.0f, 0.0f, 0.0f, 0.0f };
             }
         }
         Context->Unmap(PerObjectBuffer.Get(), 0);
@@ -586,7 +595,7 @@ namespace Graphics
         DirectX::XMVECTOR forward = DirectX::XMVector3Normalize(DirectX::XMVectorSet(std::cos(CameraState.PitchRadians) * std::cos(CameraState.YawRadians), std::cos(CameraState.PitchRadians) * std::sin(CameraState.YawRadians), std::sin(CameraState.PitchRadians), 0.0f));
         DirectX::XMMATRIX view = DirectX::XMMatrixLookAtLH(camPos, DirectX::XMVectorAdd(camPos, forward), DirectX::XMVectorSet(0, 0, 1, 0));
         DirectX::XMMATRIX proj = DirectX::XMMatrixPerspectiveFovLH(DirectX::XMConvertToRadians(CameraState.FOVDegrees), aspect, CameraState.NearClip, CameraState.FarClip);
-        
+
         D3D11_MAPPED_SUBRESOURCE pfmap = {};
         if (SUCCEEDED(Context->Map(PerFrameBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &pfmap))) {
             FPerFrameConstants pf = {}; DirectX::XMStoreFloat4x4(&pf.ViewProj, view * proj);
@@ -623,7 +632,8 @@ namespace Graphics
                 if (Context1) {
                     UINT off = (BaseFrameOffset + (i * AlignedConstantSize)) / 16, cnt = AlignedConstantSize / 16;
                     Context1->VSSetConstantBuffers1(1, 1, PerObjectBuffer.GetAddressOf(), &off, &cnt);
-                } else { Context->VSSetConstantBuffers(1, 1, PerObjectBuffer.GetAddressOf()); }
+                }
+                else { Context->VSSetConstantBuffers(1, 1, PerObjectBuffer.GetAddressOf()); }
                 Context->DrawIndexed(res.IndexCount, 0, 0);
             }
         }
