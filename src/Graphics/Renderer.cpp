@@ -418,25 +418,48 @@ namespace Graphics
         if (FAILED(SwapChain->GetBuffer(0, IID_PPV_ARGS(&BackBuffer)))) return false;
         if (FAILED(Device->CreateRenderTargetView(BackBuffer.Get(), nullptr, &MainRenderTargetView))) return false;
 
-        D3D11_TEXTURE2D_DESC DepthDesc = {};
-        DepthDesc.Width = InWidth;
-        DepthDesc.Height = InHeight;
-        DepthDesc.MipLevels = 1;
-        DepthDesc.ArraySize = 1;
-        DepthDesc.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
-        DepthDesc.SampleDesc.Count = 1;
-        DepthDesc.Usage = D3D11_USAGE_DEFAULT;
-        DepthDesc.BindFlags = D3D11_BIND_DEPTH_STENCIL;
-
         ComPtr<ID3D11Texture2D> DepthBuffer;
-        if (FAILED(Device->CreateTexture2D(&DepthDesc, nullptr, &DepthBuffer))) return false;
-        if (FAILED(Device->CreateDepthStencilView(DepthBuffer.Get(), nullptr, &DepthStencilView))) return false;
+        {
+            D3D11_TEXTURE2D_DESC DepthDesc = {};
+            DepthDesc.Width = InWidth;
+            DepthDesc.Height = InHeight;
+            DepthDesc.MipLevels = 1;
+            DepthDesc.ArraySize = 1;
+            DepthDesc.Format = DXGI_FORMAT_R32_TYPELESS;   // SRV+DSV 동시 사용
+            DepthDesc.SampleDesc.Count = 1;
+            DepthDesc.Usage = D3D11_USAGE_DEFAULT;
+            DepthDesc.BindFlags = D3D11_BIND_DEPTH_STENCIL | D3D11_BIND_SHADER_RESOURCE;
+            if (FAILED(Device->CreateTexture2D(&DepthDesc, nullptr, &DepthBuffer))) return false;
+        }
+
+        // DSV: D32_FLOAT로 해석
+        {
+            D3D11_DEPTH_STENCIL_VIEW_DESC DSVDesc = {};
+            DSVDesc.Format = DXGI_FORMAT_D32_FLOAT;
+            DSVDesc.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2D;
+            DSVDesc.Texture2D.MipSlice = 0;
+            if (FAILED(Device->CreateDepthStencilView(DepthBuffer.Get(), &DSVDesc, &DepthStencilView))) return false;
+        }
+
+        // SRV: R32_FLOAT로 해석 → CS에서 직접 읽기 가능
+        {
+            D3D11_SHADER_RESOURCE_VIEW_DESC SRVDesc = {};
+            SRVDesc.Format = DXGI_FORMAT_R32_FLOAT;
+            SRVDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+            SRVDesc.Texture2D.MostDetailedMip = 0;
+            SRVDesc.Texture2D.MipLevels = 1;
+            if (FAILED(Device->CreateShaderResourceView(DepthBuffer.Get(), &SRVDesc, &DepthCopySRV))) return false;
+        }
 
         // HUD 초기화
         HUD = std::make_unique<FHUD>();
         if (!HUD->Initialize(Device.Get(), Context.Get())) return false;
 
-        return CreateDefaultResources();
+        if (!CreateDefaultResources()) return false;
+
+        InitHiZResources(ViewportWidth, ViewportHeight);
+
+        return true;
     }
 
     void URenderer::RenderHUD()
@@ -592,7 +615,430 @@ namespace Graphics
         if (!MeshResources[0].DiffuseTextureView) MeshResources[0].DiffuseTextureView = DefaultWhiteTextureView;
         if (!MeshResources[1].DiffuseTextureView) MeshResources[1].DiffuseTextureView = DefaultWhiteTextureView;
 
+        // ── Hi-Z Build CS ─────────────────────────────────────────────────────────
+        const char* HiZBuildSrc = R"(
+    Texture2D<float>   SrcDepth : register(t0);
+    RWTexture2D<float> DstMip   : register(u0);
+
+    cbuffer MipParams : register(b0)
+    {
+        uint SrcW;
+        uint SrcH;
+        uint2 _pad;
+    };
+
+    [numthreads(8, 8, 1)]
+    void CSBuildHiZ(uint3 DTid : SV_DispatchThreadID)
+    {
+        uint2 dst = DTid.xy;
+        uint2 src = dst * 2;
+
+        float d0 = SrcDepth.Load(int3(src + uint2(0, 0), 0));
+        float d1 = SrcDepth.Load(int3(src + uint2(1, 0), 0));
+        float d2 = SrcDepth.Load(int3(src + uint2(0, 1), 0));
+        float d3 = SrcDepth.Load(int3(src + uint2(1, 1), 0));
+
+        // 경계 밖 텍셀은 0으로 처리 (src 크기 초과 방지)
+        if (src.x + 1 >= SrcW) { d1 = d0; d3 = d2; }
+        if (src.y + 1 >= SrcH) { d2 = d0; d3 = d1; }
+
+        DstMip[dst] = max(max(d0, d1), max(d2, d3));
+    }
+)";
+
+        ComPtr<ID3DBlob> HiZBuildBlob, HiZBuildErr;
+        if (FAILED(D3DCompile(HiZBuildSrc, strlen(HiZBuildSrc), "HiZBuild", nullptr, nullptr,
+            "CSBuildHiZ", "cs_5_0", 0, 0, &HiZBuildBlob, &HiZBuildErr)))
+        {
+            if (HiZBuildErr) OutputDebugStringA((char*)HiZBuildErr->GetBufferPointer());
+            return false;
+        }
+        if (FAILED(Device->CreateComputeShader(HiZBuildBlob->GetBufferPointer(),
+            HiZBuildBlob->GetBufferSize(), nullptr, &CSBuildHiZ))) return false;
+
+        // ── Occlusion Test CS ──────────────────────────────────────────────────────
+        const char* HiZCullSrc = R"(
+            struct FObjectBounds
+            {
+                float3   BoundsMin;
+                uint     ObjectIndex;
+                float3   BoundsMax;
+                uint     _pad;
+            };
+
+            cbuffer CullParams : register(b0)
+            {
+                row_major float4x4 ViewProj;
+                uint  ObjectCount;
+                uint  HiZMipLevels;
+                float HiZTexelWidth;
+                float HiZTexelHeight;
+            };
+
+            StructuredBuffer<FObjectBounds>  InBounds        : register(t0);
+            Texture2D<float>                 HiZTexture      : register(t1);
+            SamplerState                     PointClampSamp  : register(s0);
+            RWStructuredBuffer<uint>         VisibilityFlags : register(u0);
+
+            [numthreads(64, 1, 1)]
+            void CSTestOcclusion(uint3 DTid : SV_DispatchThreadID)
+            {
+                uint idx = DTid.x;
+                if (idx >= ObjectCount) return;
+
+                FObjectBounds b = InBounds[idx];
+
+                float2 ndcMin =  1.0f;
+                float2 ndcMax = -1.0f;
+                float  minZ   =  1.0f;
+
+                [unroll]
+                for (uint i = 0; i < 8; ++i)
+                {
+                    float3 corner = float3(
+                        (i & 1) ? b.BoundsMax.x : b.BoundsMin.x,
+                        (i & 2) ? b.BoundsMax.y : b.BoundsMin.y,
+                        (i & 4) ? b.BoundsMax.z : b.BoundsMin.z
+                    );
+                    float4 clip = mul(float4(corner, 1.0f), ViewProj);
+
+                    // near plane 뒤 코너 → 보수적으로 전체 화면 visible 처리
+                    if (clip.w < 1e-5f)
+                    {
+                        VisibilityFlags[b.ObjectIndex] = 1;
+                        return;
+                    }
+
+                    float3 ndc = clip.xyz / clip.w;
+                    ndcMin = min(ndcMin, ndc.xy);
+                    ndcMax = max(ndcMax, ndc.xy);
+                    minZ   = min(minZ,   ndc.z);
+                }
+
+                // 화면 밖으로 완전히 나간 경우
+                if (any(ndcMax < -1.0f) || any(ndcMin > 1.0f))
+                {
+                    VisibilityFlags[b.ObjectIndex] = 0;
+                    return;
+                }
+
+                ndcMin = clamp(ndcMin, -1.0f, 1.0f);
+                ndcMax = clamp(ndcMax, -1.0f, 1.0f);
+
+                // NDC → UV (D3D11: Y축 반전)
+                float2 uvMin = float2( ndcMin.x * 0.5f + 0.5f, -ndcMax.y * 0.5f + 0.5f);
+                float2 uvMax = float2( ndcMax.x * 0.5f + 0.5f, -ndcMin.y * 0.5f + 0.5f);
+
+                // 화면 점유 크기로 mip 선택
+                float2 sizeUV = uvMax - uvMin;
+                float  texels = max(sizeUV.x / HiZTexelWidth, sizeUV.y / HiZTexelHeight);
+                uint   mip    = (uint)clamp(log2(texels), 0.0f, (float)HiZMipLevels);
+
+                // 4코너 샘플 → 보수적 최대값
+                float d0 = HiZTexture.SampleLevel(PointClampSamp, float2(uvMin.x, uvMin.y), mip);
+                float d1 = HiZTexture.SampleLevel(PointClampSamp, float2(uvMax.x, uvMin.y), mip);
+                float d2 = HiZTexture.SampleLevel(PointClampSamp, float2(uvMin.x, uvMax.y), mip);
+                float d3 = HiZTexture.SampleLevel(PointClampSamp, float2(uvMax.x, uvMax.y), mip);
+                float occluderDepth = max(max(d0, d1), max(d2, d3));
+
+                // minZ <= occluderDepth → AABB 앞면이 occluder 앞에 있음 → visible
+                VisibilityFlags[b.ObjectIndex] = (minZ <= occluderDepth) ? 1u : 0u;
+            }
+        )";
+
+        ComPtr<ID3DBlob> HiZCullBlob, HiZCullErr;
+        if (FAILED(D3DCompile(HiZCullSrc, strlen(HiZCullSrc), "HiZCull", nullptr, nullptr,
+            "CSTestOcclusion", "cs_5_0", 0, 0, &HiZCullBlob, &HiZCullErr)))
+        {
+            if (HiZCullErr) OutputDebugStringA((char*)HiZCullErr->GetBufferPointer());
+            return false;
+        }
+        if (FAILED(Device->CreateComputeShader(HiZCullBlob->GetBufferPointer(),
+            HiZCullBlob->GetBufferSize(), nullptr, &CSTestOcclusion))) return false;
+
         return true;
+    }
+
+    void URenderer::InitHiZResources(uint32_t Width, uint32_t Height)
+    {
+        HiZWidth = Width;
+        HiZHeight = Height;
+        HiZMipCount = 1;
+        uint32_t sz = std::max<uint32_t>(Width, Height);
+        while (sz > 1) { sz >>= 1; ++HiZMipCount; }
+
+        // ── Hi-Z Texture (R32_FLOAT, 모든 mip에 UAV/SRV) ─────────────────────────
+        {
+            D3D11_TEXTURE2D_DESC td = {};
+            td.Width = Width;
+            td.Height = Height;
+            td.MipLevels = HiZMipCount;
+            td.ArraySize = 1;
+            td.Format = DXGI_FORMAT_R32_FLOAT;
+            td.SampleDesc.Count = 1;
+            td.Usage = D3D11_USAGE_DEFAULT;
+            td.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_UNORDERED_ACCESS;
+            Device->CreateTexture2D(&td, nullptr, &HiZTexture);
+        }
+
+        // 전체 SRV (Occlusion test CS에서 mip 선택 샘플링용)
+        {
+            D3D11_SHADER_RESOURCE_VIEW_DESC srvd = {};
+            srvd.Format = DXGI_FORMAT_R32_FLOAT;
+            srvd.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+            srvd.Texture2D.MostDetailedMip = 0;
+            srvd.Texture2D.MipLevels = HiZMipCount;
+            Device->CreateShaderResourceView(HiZTexture.Get(), &srvd, &HiZSRV);
+        }
+
+        // mip별 UAV & SRV
+        HiZMipUAVs.resize(HiZMipCount);
+        HiZMipSRVs.resize(HiZMipCount);
+        for (uint32_t m = 0; m < HiZMipCount; ++m)
+        {
+            D3D11_UNORDERED_ACCESS_VIEW_DESC uavd = {};
+            uavd.Format = DXGI_FORMAT_R32_FLOAT;
+            uavd.ViewDimension = D3D11_UAV_DIMENSION_TEXTURE2D;
+            uavd.Texture2D.MipSlice = m;
+            Device->CreateUnorderedAccessView(HiZTexture.Get(), &uavd, &HiZMipUAVs[m]);
+
+            D3D11_SHADER_RESOURCE_VIEW_DESC msrvd = {};
+            msrvd.Format = DXGI_FORMAT_R32_FLOAT;
+            msrvd.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+            msrvd.Texture2D.MostDetailedMip = m;
+            msrvd.Texture2D.MipLevels = 1;
+            Device->CreateShaderResourceView(HiZTexture.Get(), &msrvd, &HiZMipSRVs[m]);
+        }
+
+        // ── Bounds StructuredBuffer ───────────────────────────────────────────────
+        {
+            constexpr uint32_t MaxObj = Scene::FSceneDataSOA::MAX_OBJECTS;
+
+            D3D11_BUFFER_DESC bbd = {};
+            bbd.ByteWidth = sizeof(FObjectBoundsGPU) * MaxObj;
+            bbd.Usage = D3D11_USAGE_DYNAMIC;
+            bbd.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+            bbd.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+            bbd.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
+            bbd.StructureByteStride = sizeof(FObjectBoundsGPU);
+            Device->CreateBuffer(&bbd, nullptr, &BoundsBuffer);
+
+            D3D11_SHADER_RESOURCE_VIEW_DESC bsrvd = {};
+            bsrvd.Format = DXGI_FORMAT_UNKNOWN;
+            bsrvd.ViewDimension = D3D11_SRV_DIMENSION_BUFFER;
+            bsrvd.Buffer.FirstElement = 0;
+            bsrvd.Buffer.NumElements = MaxObj;
+            Device->CreateShaderResourceView(BoundsBuffer.Get(), &bsrvd, &BoundsSRV);
+        }
+
+        // ── Visibility RWStructuredBuffer ─────────────────────────────────────────
+        {
+            constexpr uint32_t MaxObj = Scene::FSceneDataSOA::MAX_OBJECTS;
+
+            D3D11_BUFFER_DESC vbd = {};
+            vbd.ByteWidth = sizeof(uint32_t) * MaxObj;
+            vbd.Usage = D3D11_USAGE_DEFAULT;
+            vbd.BindFlags = D3D11_BIND_UNORDERED_ACCESS;
+            vbd.MiscFlags = D3D11_RESOURCE_MISC_BUFFER_STRUCTURED;
+            vbd.StructureByteStride = sizeof(uint32_t);
+            Device->CreateBuffer(&vbd, nullptr, &VisibilityBuffer);
+
+            D3D11_UNORDERED_ACCESS_VIEW_DESC vuavd = {};
+            vuavd.Format = DXGI_FORMAT_UNKNOWN;
+            vuavd.ViewDimension = D3D11_UAV_DIMENSION_BUFFER;
+            vuavd.Buffer.FirstElement = 0;
+            vuavd.Buffer.NumElements = MaxObj;
+            Device->CreateUnorderedAccessView(VisibilityBuffer.Get(), &vuavd, &VisibilityUAV);
+
+            // CPU Readback용 Staging
+            D3D11_BUFFER_DESC sbd = vbd;
+            sbd.Usage = D3D11_USAGE_STAGING;
+            sbd.BindFlags = 0;
+            sbd.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+            sbd.MiscFlags = 0;
+            Device->CreateBuffer(&sbd, nullptr, &VisibilityStagingBuffer);
+        }
+
+        // ── CullParam / HiZBuildParam cbuffer ────────────────────────────────────
+        {
+            D3D11_BUFFER_DESC cbd = {};
+            cbd.ByteWidth = 256;
+            cbd.Usage = D3D11_USAGE_DYNAMIC;
+            cbd.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
+            cbd.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
+            Device->CreateBuffer(&cbd, nullptr, &CullParamBuffer);
+            Device->CreateBuffer(&cbd, nullptr, &HiZBuildParamBuffer);
+        }
+
+        // ── PointClamp Sampler ────────────────────────────────────────────────────
+        {
+            D3D11_SAMPLER_DESC sd = {};
+            sd.Filter = D3D11_FILTER_MIN_MAG_MIP_POINT;
+            sd.AddressU = D3D11_TEXTURE_ADDRESS_CLAMP;
+            sd.AddressV = D3D11_TEXTURE_ADDRESS_CLAMP;
+            sd.AddressW = D3D11_TEXTURE_ADDRESS_CLAMP;
+            sd.MaxLOD = D3D11_FLOAT32_MAX;
+            sd.ComparisonFunc = D3D11_COMPARISON_NEVER;
+            Device->CreateSamplerState(&sd, &PointClampSamplerState);
+        }
+    }
+
+    void URenderer::BuildHiZMips()
+    {
+        // mip0에 현재 프레임 Depth를 복사 (DepthCopySRV → HiZTexture mip0)
+        // DepthCopySRV는 R32_FLOAT로 해석된 Depth Buffer SRV
+        {
+            ID3D11Resource* depthRes = nullptr;
+            DepthCopySRV->GetResource(&depthRes);
+
+            // HiZTexture mip0만 대상으로 CopySubresourceRegion
+            Context->CopySubresourceRegion(
+                HiZTexture.Get(),
+                0,          // dst subresource (mip0)
+                0, 0, 0,    // dst x, y, z
+                depthRes,
+                0,          // src subresource (mip0)
+                nullptr);   // 전체 복사
+
+            depthRes->Release();
+        }
+
+        // mip1 ~ mipN 빌드
+        Context->CSSetShader(CSBuildHiZ.Get(), nullptr, 0);
+
+        for (uint32_t m = 1; m < HiZMipCount; ++m)
+        {
+            const uint32_t SrcW = std::max<uint32_t>(1u, HiZWidth >> (m - 1));
+            const uint32_t SrcH = std::max<uint32_t>(1u, HiZHeight >> (m - 1));
+            const uint32_t DstW = std::max<uint32_t>(1u, HiZWidth >> m);
+            const uint32_t DstH = std::max<uint32_t>(1u, HiZHeight >> m);
+
+            // MipParams 업데이트
+            {
+                struct FMipParams { uint32_t SrcW, SrcH, _pad[2]; };
+                D3D11_MAPPED_SUBRESOURCE mr = {};
+                if (SUCCEEDED(Context->Map(HiZBuildParamBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mr)))
+                {
+                    FMipParams p = { SrcW, SrcH, {0, 0} };
+                    memcpy(mr.pData, &p, sizeof(p));
+                    Context->Unmap(HiZBuildParamBuffer.Get(), 0);
+                }
+            }
+
+            Context->CSSetConstantBuffers(0, 1, HiZBuildParamBuffer.GetAddressOf());
+            Context->CSSetShaderResources(0, 1, HiZMipSRVs[m - 1].GetAddressOf());
+            Context->CSSetUnorderedAccessViews(0, 1, HiZMipUAVs[m].GetAddressOf(), nullptr);
+
+            Context->Dispatch((DstW + 7) / 8, (DstH + 7) / 8, 1);
+
+            // 다음 iteration 전 해제 (D3D11 validation)
+            ID3D11ShaderResourceView* nullSRV = nullptr;
+            ID3D11UnorderedAccessView* nullUAV = nullptr;
+            Context->CSSetShaderResources(0, 1, &nullSRV);
+            Context->CSSetUnorderedAccessViews(0, 1, &nullUAV, nullptr);
+        }
+
+        // 정리
+        Context->CSSetShader(nullptr, nullptr, 0);
+    }
+
+    void URenderer::RunOcclusionCull(Scene::FSceneDataSOA* SceneData, const DirectX::XMMATRIX& ViewProj)
+    {
+        const uint32_t Count = SceneData->RenderCount;
+        if (Count == 0) return;
+
+        // ── 1. Bounds 버퍼 업데이트 ──────────────────────────────────────────────
+        {
+            D3D11_MAPPED_SUBRESOURCE mr = {};
+            if (FAILED(Context->Map(BoundsBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mr)))
+                return;
+
+            auto* dst = static_cast<FObjectBoundsGPU*>(mr.pData);
+            for (uint32_t i = 0; i < Count; ++i)
+            {
+                const uint32_t oid = SceneData->RenderQueue[i];
+                dst[i].BoundsMin = { SceneData->MinX[oid],
+                                       SceneData->MinY[oid],
+                                       SceneData->MinZ[oid] };
+                dst[i].BoundsMax = { SceneData->MaxX[oid],
+                                       SceneData->MaxY[oid],
+                                       SceneData->MaxZ[oid] };
+                dst[i].ObjectIndex = oid;
+                dst[i]._pad = 0;
+            }
+            Context->Unmap(BoundsBuffer.Get(), 0);
+        }
+
+        // ── 2. CullParams 업데이트 ───────────────────────────────────────────────
+        {
+            struct alignas(16) FCullParams
+            {
+                DirectX::XMFLOAT4X4 ViewProj;
+                uint32_t             ObjectCount;
+                uint32_t             HiZMipLevels;
+                float                HiZTexelWidth;
+                float                HiZTexelHeight;
+            };
+
+            D3D11_MAPPED_SUBRESOURCE mr = {};
+            if (SUCCEEDED(Context->Map(CullParamBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mr)))
+            {
+                auto* p = static_cast<FCullParams*>(mr.pData);
+                DirectX::XMStoreFloat4x4(&p->ViewProj,
+                    DirectX::XMMatrixTranspose(ViewProj)); // HLSL row_major이므로 Transpose
+                p->ObjectCount = Count;
+                p->HiZMipLevels = HiZMipCount - 1;
+                p->HiZTexelWidth = 1.0f / static_cast<float>(HiZWidth);
+                p->HiZTexelHeight = 1.0f / static_cast<float>(HiZHeight);
+                Context->Unmap(CullParamBuffer.Get(), 0);
+            }
+        }
+
+        // ── 3. Compute Shader 실행 ───────────────────────────────────────────────
+        Context->CSSetShader(CSTestOcclusion.Get(), nullptr, 0);
+        Context->CSSetConstantBuffers(0, 1, CullParamBuffer.GetAddressOf());
+        Context->CSSetShaderResources(0, 1, BoundsSRV.GetAddressOf());
+        Context->CSSetShaderResources(1, 1, HiZSRV.GetAddressOf());
+        Context->CSSetSamplers(0, 1, PointClampSamplerState.GetAddressOf());
+        Context->CSSetUnorderedAccessViews(0, 1, VisibilityUAV.GetAddressOf(), nullptr);
+        UINT clearValue[4] = { 0, 0, 0, 0 };
+        Context->ClearUnorderedAccessViewUint(VisibilityUAV.Get(), clearValue);
+
+        Context->Dispatch((Count + 63) / 64, 1, 1);
+
+        // 바인딩 해제
+        {
+            ID3D11ShaderResourceView* nullSRV[2] = { nullptr, nullptr };
+            ID3D11UnorderedAccessView* nullUAV = nullptr;
+            Context->CSSetShaderResources(0, 2, nullSRV);
+            Context->CSSetUnorderedAccessViews(0, 1, &nullUAV, nullptr);
+            Context->CSSetShader(nullptr, nullptr, 0);
+        }
+
+        // ── 4. GPU → CPU Readback ────────────────────────────────────────────────
+        Context->CopyResource(VisibilityStagingBuffer.Get(), VisibilityBuffer.Get());
+
+        D3D11_MAPPED_SUBRESOURCE mr = {};
+        if (FAILED(Context->Map(VisibilityStagingBuffer.Get(), 0, D3D11_MAP_READ, 0, &mr)))
+            return;
+
+        const uint32_t* flags = static_cast<const uint32_t*>(mr.pData);
+
+        // ── 5. RenderQueue 인플레이스 압축 ──────────────────────────────────────
+        uint32_t newCount = 0;
+        for (uint32_t i = 0; i < Count; ++i)
+        {
+            const uint32_t oid = SceneData->RenderQueue[i];
+            const bool     visible = (flags[oid] != 0);
+
+            SceneData->IsVisible[oid] = visible;
+
+            if (visible)
+                SceneData->RenderQueue[newCount++] = oid;
+        }
+        SceneData->RenderCount = newCount;
+
+        Context->Unmap(VisibilityStagingBuffer.Get(), 0);
     }
 
     void URenderer::BeginFrame()
@@ -607,11 +1053,100 @@ namespace Graphics
 
     void URenderer::RenderScene(const Scene::USceneManager& InSceneManager)
     {
-        const Scene::FSceneDataSOA* SceneData = InSceneManager.GetSceneData();
+        Scene::FSceneDataSOA* SceneData =
+            const_cast<Scene::FSceneDataSOA*>(InSceneManager.GetSceneData());
+
         const Scene::FSceneSelectionData& Selection = InSceneManager.GetSelectionData();
         const uint32_t SelectedObjID = Selection.bHasSelection ? Selection.ObjectIndex : 0xFFFFFFFF;
-        if (!SceneData || !PerFrameBuffer || !PerObjectBuffer || !MaterialBuffer) return;
 
+        if (!SceneData || !PerFrameBuffer || !PerObjectBuffer || !MaterialBuffer) return;
+        if (SceneData->RenderCount == 0) return;
+
+        // ── ViewProj 먼저 계산 (Cull에도 필요) ──────────────────────────────────
+        const float aspect = (ViewportHeight == 0)
+            ? 1.0f : static_cast<float>(ViewportWidth) / static_cast<float>(ViewportHeight);
+
+        DirectX::XMVECTOR camPos = DirectX::XMLoadFloat3(&CameraState.Position);
+        DirectX::XMVECTOR forward = DirectX::XMVector3Normalize(DirectX::XMVectorSet(
+            std::cos(CameraState.PitchRadians) * std::cos(CameraState.YawRadians),
+            std::cos(CameraState.PitchRadians) * std::sin(CameraState.YawRadians),
+            std::sin(CameraState.PitchRadians), 0.0f));
+
+        const DirectX::XMMATRIX view = DirectX::XMMatrixLookAtLH(
+            camPos,
+            DirectX::XMVectorAdd(camPos, forward),
+            DirectX::XMVectorSet(0, 0, 1, 0));
+        const DirectX::XMMATRIX proj = DirectX::XMMatrixPerspectiveFovLH(
+            DirectX::XMConvertToRadians(CameraState.FOVDegrees),
+            aspect, CameraState.NearClip, CameraState.FarClip);
+        const DirectX::XMMATRIX viewProj = view * proj;
+
+        // ── Pass 1: Depth Prepass ────────────────────────────────────────────────
+        Context->ClearDepthStencilView(DepthStencilView.Get(), D3D11_CLEAR_DEPTH, 1.0f, 0);
+
+        // RTV 없이 depth-only 렌더
+        ID3D11RenderTargetView* nullRTV = nullptr;
+        Context->OMSetRenderTargets(0, &nullRTV, DepthStencilView.Get());
+
+        Context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        Context->IASetInputLayout(InputLayout.Get());
+        Context->VSSetShader(VertexShader.Get(), nullptr, 0);
+        Context->PSSetShader(nullptr, nullptr, 0);  // PS 없이 depth-only
+        Context->VSSetConstantBuffers(0, 1, PerFrameBuffer.GetAddressOf());
+        Context->RSSetState(DefaultRasterizerState.Get());
+        Context->OMSetDepthStencilState(DefaultDepthStencilState.Get(), 0);
+
+        // PerFrameBuffer 업데이트
+        {
+            D3D11_MAPPED_SUBRESOURCE pfmap = {};
+            if (SUCCEEDED(Context->Map(PerFrameBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &pfmap)))
+            {
+                FPerFrameConstants pf = {};
+                DirectX::XMStoreFloat4x4(&pf.ViewProj, viewProj);
+                memcpy(pfmap.pData, &pf, sizeof(pf));
+                Context->Unmap(PerFrameBuffer.Get(), 0);
+            }
+        }
+
+        // Depth prepass draw (모든 오브젝트)
+        for (uint32_t i = 0; i < SceneData->RenderCount; ++i)
+        {
+            const uint32_t oid = SceneData->RenderQueue[i];
+            const uint32_t mid = SceneData->MeshIDs[oid];
+            if (mid >= MAX_MESH_TYPES) continue;
+
+            const FMeshResource& res = MeshResources[mid];
+            if (!res.VertexBuffer || !res.IndexBuffer) continue;
+
+            UINT stride = sizeof(FMeshVertex), offset = 0;
+            Context->IASetVertexBuffers(0, 1, res.VertexBuffer.GetAddressOf(), &stride, &offset);
+            Context->IASetIndexBuffer(res.IndexBuffer.Get(), DXGI_FORMAT_R32_UINT, 0);
+
+            // PerObject 상수 (위치만 필요)
+            {
+                D3D11_MAPPED_SUBRESOURCE mr = {};
+                if (SUCCEEDED(Context->Map(PerObjectBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mr)))
+                {
+                    const Math::FPacked3x4Matrix& mat = SceneData->WorldMatrices[oid];
+                    FPerObjectConstants* dest = static_cast<FPerObjectConstants*>(mr.pData);
+                    DirectX::XMStoreFloat4(&dest->Row0, mat.Row0);
+                    DirectX::XMStoreFloat4(&dest->Row1, mat.Row1);
+                    DirectX::XMStoreFloat4(&dest->Row2, mat.Row2);
+                    dest->ColorModifier = { 0, 0, 0, 0 };
+                    Context->Unmap(PerObjectBuffer.Get(), 0);
+                }
+            }
+            Context->VSSetConstantBuffers(1, 1, PerObjectBuffer.GetAddressOf());
+            Context->DrawIndexed(res.IndexCount, 0, 0);
+        }
+
+        // ── Hi-Z 빌드 ────────────────────────────────────────────────────────────
+        BuildHiZMips();
+
+        // ── Occlusion Cull ───────────────────────────────────────────────────────
+        RunOcclusionCull(SceneData, viewProj);
+
+        // ── Pass 2: 최종 렌더 (visible만) ────────────────────────────────────────
         const uint32_t SourceCount = SceneData->RenderCount;
         if (SourceCount == 0) return;
 
@@ -620,54 +1155,73 @@ namespace Graphics
         const uint32_t BufferCapacity = 64 * 1024 * 1024;
 
         D3D11_MAP MapType = D3D11_MAP_WRITE_NO_OVERWRITE;
-        if (PerObjectRingBufferOffset + BulkSize > BufferCapacity) { MapType = D3D11_MAP_WRITE_DISCARD; PerObjectRingBufferOffset = 0; }
+        if (PerObjectRingBufferOffset + BulkSize > BufferCapacity)
+        {
+            MapType = D3D11_MAP_WRITE_DISCARD;
+            PerObjectRingBufferOffset = 0;
+        }
 
         D3D11_MAPPED_SUBRESOURCE PerObjectMap = {};
         if (FAILED(Context->Map(PerObjectBuffer.Get(), 0, MapType, 0, &PerObjectMap))) return;
+
         uint8_t* DestStart = static_cast<uint8_t*>(PerObjectMap.pData) + PerObjectRingBufferOffset;
         const uint32_t BaseFrameOffset = PerObjectRingBufferOffset;
 
         static uint32_t SortedQueue[Scene::FSceneDataSOA::MAX_OBJECTS];
-        uint32_t MeshCounts[MAX_MESH_TYPES] = { 0 }, MeshOffsets[MAX_MESH_TYPES] = { 0 };
-        for (uint32_t i = 0; i < SourceCount; ++i) { uint32_t mid = SceneData->MeshIDs[SceneData->RenderQueue[i]]; if (mid < MAX_MESH_TYPES) MeshCounts[mid]++; }
-        uint32_t cur = 0; for (uint32_t i = 0; i < MAX_MESH_TYPES; ++i) { MeshOffsets[i] = cur; cur += MeshCounts[i]; }
-        uint32_t TempOffsets[MAX_MESH_TYPES]; std::memcpy(TempOffsets, MeshOffsets, sizeof(MeshOffsets));
+        uint32_t MeshCounts[MAX_MESH_TYPES] = {};
+        uint32_t MeshOffsets[MAX_MESH_TYPES] = {};
+
         for (uint32_t i = 0; i < SourceCount; ++i)
         {
-            uint32_t oid = SceneData->RenderQueue[i], mid = SceneData->MeshIDs[oid];
-            if (mid < MAX_MESH_TYPES) {
-                uint32_t sidx = TempOffsets[mid]++; SortedQueue[sidx] = oid;
-                const Math::FPacked3x4Matrix& mat = SceneData->WorldMatrices[oid];
-                FPerObjectConstants* dest = reinterpret_cast<FPerObjectConstants*>(DestStart + (sidx * AlignedConstantSize));
-                DirectX::XMStoreFloat4(&dest->Row0, mat.Row0); DirectX::XMStoreFloat4(&dest->Row1, mat.Row1);
-                DirectX::XMStoreFloat4(&dest->Row2, mat.Row2);
-                dest->ColorModifier = (oid == SelectedObjID)
-                    ? DirectX::XMFLOAT4{ 0.5f, 0.0f, 0.0f, 0.0f }
-                : DirectX::XMFLOAT4{ 0.0f, 0.0f, 0.0f, 0.0f };
-            }
+            const uint32_t mid = SceneData->MeshIDs[SceneData->RenderQueue[i]];
+            if (mid < MAX_MESH_TYPES) ++MeshCounts[mid];
+        }
+
+        uint32_t cur = 0;
+        for (uint32_t i = 0; i < MAX_MESH_TYPES; ++i)
+        {
+            MeshOffsets[i] = cur;
+            cur += MeshCounts[i];
+        }
+
+        uint32_t TempOffsets[MAX_MESH_TYPES];
+        memcpy(TempOffsets, MeshOffsets, sizeof(MeshOffsets));
+
+        for (uint32_t i = 0; i < SourceCount; ++i)
+        {
+            const uint32_t oid = SceneData->RenderQueue[i];
+            const uint32_t mid = SceneData->MeshIDs[oid];
+            if (mid >= MAX_MESH_TYPES) continue;
+
+            const uint32_t sidx = TempOffsets[mid]++;
+            SortedQueue[sidx] = oid;
+
+            const Math::FPacked3x4Matrix& mat = SceneData->WorldMatrices[oid];
+            FPerObjectConstants* dest = reinterpret_cast<FPerObjectConstants*>(
+                DestStart + sidx * AlignedConstantSize);
+
+            DirectX::XMStoreFloat4(&dest->Row0, mat.Row0);
+            DirectX::XMStoreFloat4(&dest->Row1, mat.Row1);
+            DirectX::XMStoreFloat4(&dest->Row2, mat.Row2);
+            dest->ColorModifier = (oid == SelectedObjID)
+                ? DirectX::XMFLOAT4{ 0.5f, 0.0f, 0.0f, 0.0f }
+            : DirectX::XMFLOAT4{ 0.0f, 0.0f, 0.0f, 0.0f };
         }
         Context->Unmap(PerObjectBuffer.Get(), 0);
         PerObjectRingBufferOffset += BulkSize;
 
-        float aspect = (ViewportHeight == 0) ? 1.0f : (float)ViewportWidth / (float)ViewportHeight;
-        DirectX::XMVECTOR camPos = DirectX::XMLoadFloat3(&CameraState.Position);
-        DirectX::XMVECTOR forward = DirectX::XMVector3Normalize(DirectX::XMVectorSet(std::cos(CameraState.PitchRadians) * std::cos(CameraState.YawRadians), std::cos(CameraState.PitchRadians) * std::sin(CameraState.YawRadians), std::sin(CameraState.PitchRadians), 0.0f));
-        DirectX::XMMATRIX view = DirectX::XMMatrixLookAtLH(camPos, DirectX::XMVectorAdd(camPos, forward), DirectX::XMVectorSet(0, 0, 1, 0));
-        DirectX::XMMATRIX proj = DirectX::XMMatrixPerspectiveFovLH(DirectX::XMConvertToRadians(CameraState.FOVDegrees), aspect, CameraState.NearClip, CameraState.FarClip);
-
-        D3D11_MAPPED_SUBRESOURCE pfmap = {};
-        if (SUCCEEDED(Context->Map(PerFrameBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &pfmap))) {
-            FPerFrameConstants pf = {}; DirectX::XMStoreFloat4x4(&pf.ViewProj, view * proj);
-            std::memcpy(pfmap.pData, &pf, sizeof(pf)); Context->Unmap(PerFrameBuffer.Get(), 0);
-        }
+        // RTV 복원 후 최종 렌더
+        Context->OMSetRenderTargets(1, MainRenderTargetView.GetAddressOf(), DepthStencilView.Get());
 
         Context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
         Context->IASetInputLayout(InputLayout.Get());
-        Context->VSSetShader(VertexShader.Get(), nullptr, 0); Context->PSSetShader(PixelShader.Get(), nullptr, 0);
+        Context->VSSetShader(VertexShader.Get(), nullptr, 0);
+        Context->PSSetShader(PixelShader.Get(), nullptr, 0);
         Context->VSSetConstantBuffers(0, 1, PerFrameBuffer.GetAddressOf());
         Context->PSSetConstantBuffers(0, 1, PerFrameBuffer.GetAddressOf());
         Context->PSSetSamplers(0, 1, DiffuseSamplerState.GetAddressOf());
-        Context->RSSetState(DefaultRasterizerState.Get()); Context->OMSetDepthStencilState(DefaultDepthStencilState.Get(), 0);
+        Context->RSSetState(DefaultRasterizerState.Get());
+        Context->OMSetDepthStencilState(DefaultDepthStencilState.Get(), 0);
 
         for (uint32_t mid = 0; mid < MAX_MESH_TYPES; ++mid)
         {
@@ -676,23 +1230,35 @@ namespace Graphics
             if (!res.VertexBuffer || !res.IndexBuffer) continue;
 
             D3D11_MAPPED_SUBRESOURCE matmap = {};
-            if (SUCCEEDED(Context->Map(MaterialBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &matmap))) {
-                FMaterialConstants mc = { { 1, 1, 1, 1 } }; std::memcpy(matmap.pData, &mc, sizeof(mc));
+            if (SUCCEEDED(Context->Map(MaterialBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &matmap)))
+            {
+                FMaterialConstants mc = { { 1, 1, 1, 1 } };
+                memcpy(matmap.pData, &mc, sizeof(mc));
                 Context->Unmap(MaterialBuffer.Get(), 0);
             }
             Context->PSSetConstantBuffers(2, 1, MaterialBuffer.GetAddressOf());
-            ID3D11ShaderResourceView* srv = res.DiffuseTextureView ? res.DiffuseTextureView.Get() : DefaultWhiteTextureView.Get();
+
+            ID3D11ShaderResourceView* srv = res.DiffuseTextureView
+                ? res.DiffuseTextureView.Get()
+                : DefaultWhiteTextureView.Get();
             Context->PSSetShaderResources(0, 1, &srv);
+
             UINT stride = sizeof(FMeshVertex), offset = 0;
             Context->IASetVertexBuffers(0, 1, res.VertexBuffer.GetAddressOf(), &stride, &offset);
             Context->IASetIndexBuffer(res.IndexBuffer.Get(), DXGI_FORMAT_R32_UINT, 0);
 
-            for (uint32_t i = MeshOffsets[mid]; i < MeshOffsets[mid] + MeshCounts[mid]; ++i) {
-                if (Context1) {
-                    UINT off = (BaseFrameOffset + (i * AlignedConstantSize)) / 16, cnt = AlignedConstantSize / 16;
+            for (uint32_t i = MeshOffsets[mid]; i < MeshOffsets[mid] + MeshCounts[mid]; ++i)
+            {
+                if (Context1)
+                {
+                    UINT off = (BaseFrameOffset + i * AlignedConstantSize) / 16;
+                    UINT cnt = AlignedConstantSize / 16;
                     Context1->VSSetConstantBuffers1(1, 1, PerObjectBuffer.GetAddressOf(), &off, &cnt);
                 }
-                else { Context->VSSetConstantBuffers(1, 1, PerObjectBuffer.GetAddressOf()); }
+                else
+                {
+                    Context->VSSetConstantBuffers(1, 1, PerObjectBuffer.GetAddressOf());
+                }
                 Context->DrawIndexed(res.IndexCount, 0, 0);
             }
         }

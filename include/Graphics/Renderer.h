@@ -9,6 +9,7 @@
 #include <string>
 #include <vector>
 #include <wrl/client.h>
+#include "Scene/SceneData.h"
 
 namespace Scene { class USceneManager; }
 
@@ -67,6 +68,11 @@ namespace Graphics
     private:
         bool CreateDefaultResources();
 
+        void InitHiZResources(uint32_t Width, uint32_t Height);  // 추가
+        void BuildHiZMips();                                      // 추가
+        void RunOcclusionCull(Scene::FSceneDataSOA* SceneData,
+            const DirectX::XMMATRIX& ViewProj); // 추가
+
     private:
         static constexpr uint32_t MAX_MESH_TYPES = 2;
 
@@ -98,5 +104,30 @@ namespace Graphics
         FDebugRenderSettings DebugSettings;
         Core::FFramePerformanceMetrics CurrentMetrics; // 추가: HUD에 전달할 데이터
         std::unique_ptr<FHUD> HUD; // 추가: HUD 객체
+
+        ComPtr<ID3D11ShaderResourceView> DepthCopySRV;
+        // Hi-Z Occlusion Culling
+        ComPtr<ID3D11Texture2D>                          HiZTexture;
+        ComPtr<ID3D11ShaderResourceView>                 HiZSRV;
+        std::vector<ComPtr<ID3D11UnorderedAccessView>>   HiZMipUAVs;
+        std::vector<ComPtr<ID3D11ShaderResourceView>>    HiZMipSRVs;
+
+        ComPtr<ID3D11ComputeShader>                      CSBuildHiZ;
+        ComPtr<ID3D11ComputeShader>                      CSTestOcclusion;
+
+        ComPtr<ID3D11Buffer>                             BoundsBuffer;
+        ComPtr<ID3D11ShaderResourceView>                 BoundsSRV;
+
+        ComPtr<ID3D11Buffer>                             VisibilityBuffer;
+        ComPtr<ID3D11UnorderedAccessView>                VisibilityUAV;
+        ComPtr<ID3D11Buffer>                             VisibilityStagingBuffer;
+
+        ComPtr<ID3D11Buffer>                             CullParamBuffer;
+        ComPtr<ID3D11Buffer>                             HiZBuildParamBuffer;
+        ComPtr<ID3D11SamplerState>                       PointClampSamplerState;
+
+        uint32_t HiZWidth = 0;
+        uint32_t HiZHeight = 0;
+        uint32_t HiZMipCount = 0;
     };
 }
