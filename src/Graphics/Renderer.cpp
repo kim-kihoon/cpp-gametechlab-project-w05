@@ -524,8 +524,8 @@ namespace Graphics
         if (!CreateSolidTexture(Device.Get(), { 1.0f, 1.0f, 1.0f, 1.0f }, DefaultWhiteTextureView)) return false;
 
         const std::wstring MeshBasePath = Core::FPathManager::GetMeshPath();
-        if (!CreateMeshBuffers(Device.Get(), MeshBasePath + L"apple_mid.obj", MeshResources[0])) return false;
-        if (!CreateMeshBuffers(Device.Get(), MeshBasePath + L"bitten_apple_mid.obj", MeshResources[1])) return false;
+        if (!LoadMeshResource(Device.Get(), MeshBasePath + L"apple_mid.obj", MeshResources[0])) return false;
+        if (!LoadMeshResource(Device.Get(), MeshBasePath + L"bitten_apple_mid.obj", MeshResources[1])) return false;
         if (!MeshResources[0].DiffuseTextureView) MeshResources[0].DiffuseTextureView = DefaultWhiteTextureView;
         if (!MeshResources[1].DiffuseTextureView) MeshResources[1].DiffuseTextureView = DefaultWhiteTextureView;
 
