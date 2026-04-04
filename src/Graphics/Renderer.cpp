@@ -357,18 +357,18 @@ namespace Graphics
         ViewportHeight = static_cast<uint32_t>(InHeight);
 
         DXGI_SWAP_CHAIN_DESC SwapChainDesc = {};
-        SwapChainDesc.BufferCount = 2;
+        SwapChainDesc.BufferCount = 3; // Triple Buffering
         SwapChainDesc.BufferDesc.Width = InWidth;
         SwapChainDesc.BufferDesc.Height = InHeight;
         SwapChainDesc.BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-        SwapChainDesc.BufferDesc.RefreshRate.Numerator = 165;
+        SwapChainDesc.BufferDesc.RefreshRate.Numerator = 0; // Uncapped
         SwapChainDesc.BufferDesc.RefreshRate.Denominator = 1;
         SwapChainDesc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
         SwapChainDesc.OutputWindow = InWindowHandle;
         SwapChainDesc.SampleDesc.Count = 1;
         SwapChainDesc.SampleDesc.Quality = 0;
         SwapChainDesc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
-        SwapChainDesc.Flags = DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH;
+        SwapChainDesc.Flags = DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH | DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING;
         SwapChainDesc.Windowed = TRUE;
 
         const D3D_FEATURE_LEVEL FeatureLevels[] = { D3D_FEATURE_LEVEL_11_0 };
@@ -531,6 +531,18 @@ namespace Graphics
         SamplerDesc.MaxLOD = D3D11_FLOAT32_MAX;
         if (FAILED(Device->CreateSamplerState(&SamplerDesc, &DiffuseSamplerState))) return false;
 
+        D3D11_RASTERIZER_DESC RasterizerDesc = {};
+        RasterizerDesc.FillMode = D3D11_FILL_SOLID;
+        RasterizerDesc.CullMode = D3D11_CULL_BACK;
+        RasterizerDesc.DepthClipEnable = TRUE;
+        if (FAILED(Device->CreateRasterizerState(&RasterizerDesc, &DefaultRasterizerState))) return false;
+
+        D3D11_DEPTH_STENCIL_DESC DepthDesc = {};
+        DepthDesc.DepthEnable = TRUE;
+        DepthDesc.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ALL;
+        DepthDesc.DepthFunc = D3D11_COMPARISON_LESS_EQUAL;
+        if (FAILED(Device->CreateDepthStencilState(&DepthDesc, &DefaultDepthStencilState))) return false;
+
         if (!CreateSolidTexture(Device.Get(), { 1.0f, 1.0f, 1.0f, 1.0f }, DefaultWhiteTextureView)) return false;
 
         const std::wstring MeshBasePath = Core::FPathManager::GetMeshPath();
@@ -638,6 +650,9 @@ namespace Graphics
         Context->VSSetConstantBuffers(0, 1, PerFrameBuffer.GetAddressOf());
         Context->PSSetConstantBuffers(0, 1, PerFrameBuffer.GetAddressOf());
         Context->PSSetSamplers(0, 1, DiffuseSamplerState.GetAddressOf());
+
+        Context->RSSetState(DefaultRasterizerState.Get());
+        Context->OMSetDepthStencilState(DefaultDepthStencilState.Get(), 0);
 
         for (uint32_t MeshID = 0; MeshID < MAX_MESH_TYPES; ++MeshID)
         {
