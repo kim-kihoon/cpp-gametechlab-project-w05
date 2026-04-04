@@ -1,6 +1,7 @@
 #include "Scene/SceneTypes.h"
 #include "Scene/SceneData.h"
 #include "Math/Frustum.h"
+#include <Core/AppTypes.h>
 #include <algorithm>
 #include <stack>
 #include <vector>
@@ -163,6 +164,7 @@ namespace Scene
         Stack.reserve(256);
 
         float RootT;
+        Core::GPerformanceMetrics.BVHNodeTestCount++;
         if (!Ray.Intersects(Nodes[0].Bounds, RootT) || RootT > NearestT) return false;
 
         Stack.push_back(0);
@@ -176,6 +178,7 @@ namespace Scene
 
             if (Node.IsLeaf())
             {
+                Core::GPerformanceMetrics.ObjectAABBTestCount += Node.ObjectCount;
                 for (uint32_t i = 0; i < Node.ObjectCount; ++i)
                 {
                     uint32_t ObjIdx = ObjectIndices[Node.ObjectIndex + i];
@@ -194,6 +197,7 @@ namespace Scene
             else
             {
                 float tL, tR;
+                Core::GPerformanceMetrics.BVHNodeTestCount += 2;
                 bool hitL = Ray.Intersects(Nodes[Node.LeftChild].Bounds, tL) && tL < NearestT;
                 bool hitR = Ray.Intersects(Nodes[Node.RightChild].Bounds, tR) && tR < NearestT;
 

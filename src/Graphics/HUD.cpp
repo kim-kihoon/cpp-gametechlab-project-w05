@@ -143,6 +143,7 @@ namespace Graphics
         BatchedVertices.clear();
 
         char Buffer[256];
+        char Buffer2[256];
 
         float FrameMS = (InMetrics.FramesPerSecond > 0.0f) ? (1000.0f / InMetrics.FramesPerSecond) : 0.0f;
 
@@ -155,7 +156,13 @@ namespace Graphics
             FrameMS,
             LastPickingMS);
 
+        std::snprintf(Buffer2, sizeof(Buffer2),
+            "BVH Tests -> Nodes: %u, Object AABBs: %u",
+            InMetrics.BVHNodeTestCount,
+            InMetrics.ObjectAABBTestCount);
+
         BatchText(Buffer, 10.0f, 10.0f);
+        BatchText(Buffer2, 10.0f, 30.0f);
     }
 
     void FHUD::Render()

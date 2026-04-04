@@ -603,6 +603,10 @@ namespace Graphics
         HUD = std::make_unique<FHUD>();
         if (!HUD->Initialize(Device.Get(), Context.Get())) return false;
 
+        // DebugRenderer 초기화
+        DebugRenderer = std::make_unique<UDebugRenderer>();
+        if (!DebugRenderer->Initialize(Device.Get())) return false;
+
         return CreateDefaultResources();
     }
 
@@ -862,6 +866,29 @@ namespace Graphics
                 else { Context->VSSetConstantBuffers(1, 1, PerObjectBuffer.GetAddressOf()); }
                 Context->DrawIndexed(res.IndexCount, 0, 0);
             }
+        }
+
+        DrawDebugBVH(InSceneManager);
+        if (DebugRenderer)
+        {
+            DebugRenderer->Render(Context.Get(), view * proj);
+        }
+    }
+
+    void URenderer::DrawDebugBVH(const Scene::USceneManager& InSceneManager)
+    {
+        // BVH AABB 박스 디버그 드로우 토글 (원할 때 아래 return 문을 주석 처리하면 박스가 그려집니다)
+         return;
+
+        if (!DebugRenderer) return;
+
+        const Scene::FSceneBVH* BVH = InSceneManager.GetSceneBVH();
+        if (!BVH || BVH->Nodes.empty()) return;
+
+        for (const auto& Node : BVH->Nodes)
+        {
+            DirectX::XMFLOAT4 Color = Node.IsLeaf() ? DirectX::XMFLOAT4{1.0f, 0.0f, 0.0f, 1.0f} : DirectX::XMFLOAT4{0.0f, 1.0f, 0.0f, 1.0f};
+            DebugRenderer->AddBox(Node.Bounds, Color);
         }
     }
 

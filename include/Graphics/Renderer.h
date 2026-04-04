@@ -1,6 +1,7 @@
 ﻿#pragma once
 #include <Graphics/RendererTypes.h>
 #include <Graphics/HUD.h>
+#include <Graphics/DebugLine.h> // 추가: DebugLine.h
 #include <Core/AppTypes.h>
 #include <DirectXMath.h>
 #include <array>
@@ -10,7 +11,7 @@
 #include <vector>
 #include <wrl/client.h>
 #include "Math/MathTypes.h"
-
+class UDebugRenderer;
 namespace Scene { class USceneManager; }
 
 namespace Graphics
@@ -87,6 +88,7 @@ namespace Graphics
 
     private:
         bool CreateDefaultResources();
+        void DrawDebugBVH(const Scene::USceneManager& InSceneManager); // 추가: BVH AABB 디버그 드로우 함수
 
     private:
         static constexpr uint32_t MAX_MESH_TYPES = 2;
@@ -119,5 +121,6 @@ namespace Graphics
         FDebugRenderSettings DebugSettings;
         Core::FFramePerformanceMetrics CurrentMetrics; // 추가: HUD에 전달할 데이터
         std::unique_ptr<FHUD> HUD; // 추가: HUD 객체
+        std::unique_ptr<UDebugRenderer> DebugRenderer; // 추가: 디버그 렌더러
     };
 }

@@ -17,6 +17,10 @@
 #include <sstream>
 #include <windowsx.h>
 
+namespace Core
+{
+    FFramePerformanceMetrics GPerformanceMetrics;
+}
 
 namespace
 {
@@ -320,6 +324,9 @@ void UApp::Picking()
 {
     if (bPendingPick && SceneManager)
     {
+        Core::GPerformanceMetrics.BVHNodeTestCount = 0;
+        Core::GPerformanceMetrics.ObjectAABBTestCount = 0;
+
         Math::FRay WorldRay = CalculatePickingRay(CameraState, PickPosition.x, PickPosition.y, ScreenWidth, ScreenHeight);
 
         auto PreciseTriangleTest = [&](uint32_t ObjIndex, float& OutHitDistance) -> bool
@@ -385,7 +392,7 @@ void UApp::Picking()
         }
 
         // 전체 소요 시간 기록: 현재 사이클 - 클릭 시작 사이클
-        FramePerformanceMetrics.LastPickingCycles = Core::FPlatformTime::Cycles64() - PickStartCycles;
+        Core::GPerformanceMetrics.LastPickingCycles = Core::FPlatformTime::Cycles64() - PickStartCycles;
 
         bPendingPick = false;
     }
@@ -393,7 +400,7 @@ void UApp::Picking()
 
 void UApp::Render()
 {
-    Renderer->UpdatePerformanceMetrics(FramePerformanceMetrics); // 추가: 성능 데이터 전달
+    Renderer->UpdatePerformanceMetrics(Core::GPerformanceMetrics); // 추가: 성능 데이터 전달
     Renderer->SetCameraState(CameraState);
     Renderer->BeginFrame();
     Renderer->RenderScene(*SceneManager);
@@ -426,10 +433,10 @@ void UApp::UpdateCamera(float InDeltaTime)
 
 void UApp::UpdateFramePerformanceMetrics(float InDeltaTime)
 {
-    FramePerformanceMetrics.DeltaTimeSeconds = InDeltaTime;
-    //     FramePerformanceMetrics.ElapsedTimeMilliseconds = InDeltaTime * 1000.0f;
-    FramePerformanceMetrics.FramesPerSecond = (InDeltaTime > 0.0f) ? (1.0f / InDeltaTime) : 0.0f;
-    ++FramePerformanceMetrics.FrameIndex;
+    Core::GPerformanceMetrics.DeltaTimeSeconds = InDeltaTime;
+    //     Core::GPerformanceMetrics.ElapsedTimeMilliseconds = InDeltaTime * 1000.0f;
+    Core::GPerformanceMetrics.FramesPerSecond = (InDeltaTime > 0.0f) ? (1.0f / InDeltaTime) : 0.0f;
+    ++Core::GPerformanceMetrics.FrameIndex;
 
     static float TitleUpdateAccumulator = 0.0f;
     static uint64_t TitleUpdateFrames = 0;

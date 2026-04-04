@@ -16,5 +16,12 @@ namespace Core
         uint64_t TotalPickingCycles = 0;
 
         uint64_t FrameIndex = 0;
+
+        // BVH 및 충돌 검사 통계 (매 프레임 리셋)
+        uint32_t BVHNodeTestCount = 0;
+        uint32_t ObjectAABBTestCount = 0;
     };
+
+    // 전역 성능 지표
+    extern FFramePerformanceMetrics GPerformanceMetrics;
 }
