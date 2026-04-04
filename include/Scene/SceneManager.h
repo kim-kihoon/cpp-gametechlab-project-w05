@@ -47,6 +47,9 @@ namespace Scene
         const FSceneDataSOA* GetSceneData() const { return SceneData.get(); }
         UUniformGrid* GetGrid() { return Grid.get(); }
 		const UUniformGrid* GetGrid() const { return Grid.get(); }
+        FSceneBVH* GetSceneBVH() { return &SceneBVH; }
+        const FSceneBVH* GetSceneBVH() const { return &SceneBVH; }
+
         FSceneStatistics GetSceneStatistics() const;
         const FSceneSelectionData& GetSelectionData() const { return SelectionData; }
         uint32_t GetVisibleObjectCount() const { return SceneData ? SceneData->RenderCount : 0; }
@@ -54,11 +57,14 @@ namespace Scene
         uint32_t GetObjectCount() const { return SceneData ? SceneData->TotalObjectCount : 0; }
         static constexpr uint32_t GetMaxObjectCount() { return FSceneDataSOA::MAX_OBJECTS; }
 
+        void BuildSceneBVH();
+
     private:
         void ResetSelectionState();
 
         std::unique_ptr<FSceneDataSOA> SceneData;
         std::unique_ptr<UUniformGrid> Grid;
+        FSceneBVH SceneBVH;
         FSceneSelectionData SelectionData;
     };
 }

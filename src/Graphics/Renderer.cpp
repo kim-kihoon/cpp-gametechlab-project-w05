@@ -368,8 +368,175 @@ namespace Graphics
             }
 
             OutMeshResource.IndexCount = static_cast<uint32_t>(OutMeshResource.SourceIndices.size());
+            OutMeshResource.BuildBVH();
             return true;
         }
+    }
+
+    void URenderer::FMeshResource::BuildBVH()
+    {
+        MeshBVH.Nodes.clear();
+        MeshBVH.TriangleIndices.clear();
+
+        uint32_t TriangleCount = (uint32_t)SourceIndices.size() / 3;
+        if (TriangleCount == 0) return;
+
+        MeshBVH.TriangleIndices.reserve(TriangleCount);
+        for (uint32_t i = 0; i < TriangleCount; ++i) MeshBVH.TriangleIndices.push_back(i);
+
+        // Pre-allocate nodes to avoid reallocations during build
+        MeshBVH.Nodes.reserve(TriangleCount * 2);
+        MeshBVH.Nodes.emplace_back();
+
+        struct BuildState { uint32_t NodeIndex; uint32_t TriStart; uint32_t TriCount; };
+        std::vector<BuildState> Stack;
+        Stack.push_back({ 0, 0, TriangleCount });
+
+        while (!Stack.empty())
+        {
+            BuildState State = Stack.back();
+            Stack.pop_back();
+
+            // Calculate bounds
+            Math::FBox Bounds;
+            for (uint32_t i = 0; i < State.TriCount; ++i)
+            {
+                uint32_t TriIdx = MeshBVH.TriangleIndices[State.TriStart + i];
+                Bounds.Expand(SourceVertices[SourceIndices[TriIdx * 3]].Position);
+                Bounds.Expand(SourceVertices[SourceIndices[TriIdx * 3 + 1]].Position);
+                Bounds.Expand(SourceVertices[SourceIndices[TriIdx * 3 + 2]].Position);
+            }
+            MeshBVH.Nodes[State.NodeIndex].Bounds = Bounds;
+
+            if (State.TriCount <= 4)
+            {
+                MeshBVH.Nodes[State.NodeIndex].TriangleIndex = State.TriStart;
+                MeshBVH.Nodes[State.NodeIndex].TriangleCount = State.TriCount;
+                continue;
+            }
+
+            // Split
+            float SizeX = Bounds.Max.x - Bounds.Min.x;
+            float SizeY = Bounds.Max.y - Bounds.Min.y;
+            float SizeZ = Bounds.Max.z - Bounds.Min.z;
+            int Axis = (SizeX > SizeY && SizeX > SizeZ) ? 0 : (SizeY > SizeZ ? 1 : 2);
+            float SplitPos = 0.5f * (reinterpret_cast<float*>(&Bounds.Min)[Axis] + reinterpret_cast<float*>(&Bounds.Max)[Axis]);
+
+            uint32_t i = State.TriStart;
+            uint32_t j = State.TriStart + State.TriCount - 1;
+            while (i <= j)
+            {
+                uint32_t TriIdx = MeshBVH.TriangleIndices[i];
+                const auto& V0 = SourceVertices[SourceIndices[TriIdx * 3]].Position;
+                const auto& V1 = SourceVertices[SourceIndices[TriIdx * 3 + 1]].Position;
+                const auto& V2 = SourceVertices[SourceIndices[TriIdx * 3 + 2]].Position;
+                float Centroid = (reinterpret_cast<const float*>(&V0)[Axis] + reinterpret_cast<const float*>(&V1)[Axis] + reinterpret_cast<const float*>(&V2)[Axis]) / 3.0f;
+
+                if (Centroid < SplitPos) i++;
+                else { std::swap(MeshBVH.TriangleIndices[i], MeshBVH.TriangleIndices[j]); j--; }
+            }
+
+            uint32_t LeftCount = i - State.TriStart;
+            if (LeftCount == 0 || LeftCount == State.TriCount) LeftCount = State.TriCount / 2;
+
+            uint32_t LeftIdx = (uint32_t)MeshBVH.Nodes.size();
+            MeshBVH.Nodes.emplace_back();
+            uint32_t RightIdx = (uint32_t)MeshBVH.Nodes.size();
+            MeshBVH.Nodes.emplace_back();
+
+            MeshBVH.Nodes[State.NodeIndex].LeftChild = LeftIdx;
+            MeshBVH.Nodes[State.NodeIndex].RightChild = RightIdx;
+
+            Stack.push_back({ RightIdx, State.TriStart + LeftCount, State.TriCount - LeftCount });
+            Stack.push_back({ LeftIdx, State.TriStart, LeftCount });
+        }
+    }
+
+    bool URenderer::FMeshResource::Raycast(const Math::FRay& LocalRay, float& OutT) const
+    {
+        if (MeshBVH.Nodes.empty()) return false;
+
+        float NearestT = OutT > 0.0f ? OutT : FLT_MAX;
+        bool bHit = false;
+
+        // Use a fixed-size local stack to avoid heap allocation
+        uint32_t Stack[64];
+        uint32_t StackPtr = 0;
+
+        float RootT;
+        if (!LocalRay.Intersects(MeshBVH.Nodes[0].Bounds, RootT)) return false;
+        if (RootT > NearestT) return false;
+
+        Stack[StackPtr++] = 0;
+
+        while (StackPtr > 0)
+        {
+            uint32_t NodeIdx = Stack[--StackPtr];
+            const FBVHNode& Node = MeshBVH.Nodes[NodeIdx];
+
+            if (Node.IsLeaf())
+            {
+                for (uint32_t i = 0; i < Node.TriangleCount; ++i)
+                {
+                    uint32_t TriIdx = MeshBVH.TriangleIndices[Node.TriangleIndex + i];
+                    DirectX::XMVECTOR V0 = DirectX::XMLoadFloat3(&SourceVertices[SourceIndices[TriIdx * 3]].Position);
+                    DirectX::XMVECTOR V1 = DirectX::XMLoadFloat3(&SourceVertices[SourceIndices[TriIdx * 3 + 1]].Position);
+                    DirectX::XMVECTOR V2 = DirectX::XMLoadFloat3(&SourceVertices[SourceIndices[TriIdx * 3 + 2]].Position);
+
+                    DirectX::XMVECTOR LocalOrigin = DirectX::XMLoadFloat3(&LocalRay.Origin);
+                    DirectX::XMVECTOR LocalDir = DirectX::XMLoadFloat3(&LocalRay.Direction);
+
+                    DirectX::XMVECTOR Edge1 = DirectX::XMVectorSubtract(V1, V0);
+                    DirectX::XMVECTOR Edge2 = DirectX::XMVectorSubtract(V2, V0);
+                    DirectX::XMVECTOR H = DirectX::XMVector3Cross(LocalDir, Edge2);
+
+                    float A = DirectX::XMVectorGetX(DirectX::XMVector3Dot(Edge1, H));
+                    if (A > -0.00001f && A < 0.00001f) continue;
+
+                    float F = 1.0f / A;
+                    DirectX::XMVECTOR S = DirectX::XMVectorSubtract(LocalOrigin, V0);
+                    float U = F * DirectX::XMVectorGetX(DirectX::XMVector3Dot(S, H));
+                    if (U < 0.0f || U > 1.0f) continue;
+
+                    DirectX::XMVECTOR Q = DirectX::XMVector3Cross(S, Edge1);
+                    float V = F * DirectX::XMVectorGetX(DirectX::XMVector3Dot(LocalDir, Q));
+                    if (V < 0.0f || U + V > 1.0f) continue;
+
+                    float T = F * DirectX::XMVectorGetX(DirectX::XMVector3Dot(Edge2, Q));
+                    if (T > 0.00001f && T < NearestT)
+                    {
+                        NearestT = T;
+                        bHit = true;
+                    }
+                }
+            }
+            else
+            {
+                // Front-to-back traversal optimization: Check child distances and push closer one last
+                float tL, tR;
+                bool hitL = LocalRay.Intersects(MeshBVH.Nodes[Node.LeftChild].Bounds, tL) && tL < NearestT;
+                bool hitR = LocalRay.Intersects(MeshBVH.Nodes[Node.RightChild].Bounds, tR) && tR < NearestT;
+
+                if (hitL && hitR)
+                {
+                    if (tL < tR)
+                    {
+                        Stack[StackPtr++] = Node.RightChild;
+                        Stack[StackPtr++] = Node.LeftChild;
+                    }
+                    else
+                    {
+                        Stack[StackPtr++] = Node.LeftChild;
+                        Stack[StackPtr++] = Node.RightChild;
+                    }
+                }
+                else if (hitL) Stack[StackPtr++] = Node.LeftChild;
+                else if (hitR) Stack[StackPtr++] = Node.RightChild;
+            }
+        }
+
+        if (bHit) OutT = NearestT;
+        return bHit;
     }
 
     URenderer::URenderer() = default;

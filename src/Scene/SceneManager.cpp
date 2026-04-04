@@ -31,6 +31,11 @@ namespace Scene
         // 여기서는 매 프레임 루프를 도는 행위를 금지함.
     }
 
+    void USceneManager::BuildSceneBVH()
+    {
+        if (SceneData) SceneBVH.Build(*SceneData);
+    }
+
     void USceneManager::ResetScene()
     {
 		if (!SceneData) return;
@@ -38,6 +43,7 @@ namespace Scene
 		SceneData->ResetRenderQueue();
 		SceneData->IsVisible.fill(false);
 		ResetSelectionState();
+        BuildSceneBVH();
     }
 
     bool USceneManager::SpawnStaticMesh(const FSceneSpawnRequest& InRequest, bool bRebuildGrid)
@@ -70,7 +76,10 @@ namespace Scene
         SceneData->TotalObjectCount++;
 
         // 4. 그리드 삽입
-		if (bRebuildGrid && Grid) { Grid->BuildGrid(); }
+		if (bRebuildGrid) 
+        { 
+            // if (Grid) Grid->BuildGrid(); 
+            BuildSceneBVH();        }
 
         return true;
     }
@@ -96,8 +105,8 @@ namespace Scene
                 }
             }
         }
-        if (Grid) Grid->BuildGrid();
-    }
+        // if (Grid) Grid->BuildGrid(); 
+        BuildSceneBVH();    }
 
     bool USceneManager::EnsureObjectCount(uint32_t InObjectCount)
     {
@@ -162,8 +171,51 @@ namespace Scene
         File.read(reinterpret_cast<char*>(SceneData->MaterialIDs.data()), sizeof(uint32_t) * Count);
 
         SceneData->TotalObjectCount = Count;
-        if (Grid) Grid->BuildGrid();
+        // if (Grid) Grid->BuildGrid();
+        BuildSceneBVH();
         return File.good();
+    }
+
+    bool USceneManager::AddObject(const Math::FBox& InBounds, const Math::FMatrix& InWorldMatrix, uint32_t InMeshID, uint32_t InMaterialID)
+    {
+        if (!SceneData || SceneData->TotalObjectCount >= FSceneDataSOA::MAX_OBJECTS) return false;
+
+        const uint32_t ObjectIndex = SceneData->TotalObjectCount;
+        SceneData->MinX[ObjectIndex] = InBounds.Min.x;
+        SceneData->MinY[ObjectIndex] = InBounds.Min.y;
+        SceneData->MinZ[ObjectIndex] = InBounds.Min.z;
+        SceneData->MaxX[ObjectIndex] = InBounds.Max.x;
+        SceneData->MaxY[ObjectIndex] = InBounds.Max.y;
+        SceneData->MaxZ[ObjectIndex] = InBounds.Max.z;
+
+        SceneData->WorldMatrices[ObjectIndex].Store(InWorldMatrix);
+        SceneData->MeshIDs[ObjectIndex] = InMeshID;
+        SceneData->MaterialIDs[ObjectIndex] = InMaterialID;
+        SceneData->IsVisible[ObjectIndex] = true;
+
+        SceneData->TotalObjectCount++;
+        return true;
+    }
+
+    bool USceneManager::AddObjectPacked(const Math::FBox& InBounds, const Math::FPacked3x4Matrix& InWorldMatrix, uint32_t InMeshID, uint32_t InMaterialID)
+    {
+        if (!SceneData || SceneData->TotalObjectCount >= FSceneDataSOA::MAX_OBJECTS) return false;
+
+        const uint32_t ObjectIndex = SceneData->TotalObjectCount;
+        SceneData->MinX[ObjectIndex] = InBounds.Min.x;
+        SceneData->MinY[ObjectIndex] = InBounds.Min.y;
+        SceneData->MinZ[ObjectIndex] = InBounds.Min.z;
+        SceneData->MaxX[ObjectIndex] = InBounds.Max.x;
+        SceneData->MaxY[ObjectIndex] = InBounds.Max.y;
+        SceneData->MaxZ[ObjectIndex] = InBounds.Max.z;
+
+        SceneData->WorldMatrices[ObjectIndex] = InWorldMatrix;
+        SceneData->MeshIDs[ObjectIndex] = InMeshID;
+        SceneData->MaterialIDs[ObjectIndex] = InMaterialID;
+        SceneData->IsVisible[ObjectIndex] = true;
+
+        SceneData->TotalObjectCount++;
+        return true;
     }
 
     bool USceneManager::SelectObject(uint32_t InObjectIndex)

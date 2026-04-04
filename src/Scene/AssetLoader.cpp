@@ -131,7 +131,8 @@ namespace Scene
             }
         }
 
-		if (InSceneManager.GetGrid()) { InSceneManager.GetGrid()->BuildGrid(); }
+		// if (InSceneManager.GetGrid()) { InSceneManager.GetGrid()->BuildGrid(); }
+		InSceneManager.BuildSceneBVH();
 
         return InSceneManager.GetSceneStatistics().TotalObjectCount > 0;
     }

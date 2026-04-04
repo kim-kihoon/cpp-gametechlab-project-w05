@@ -19,7 +19,7 @@ set(IMGUI_SOURCES
     "ImGui/imgui_impl_win32.cpp"
 )
 
-add_executable(VerstappenEngine WIN32 ${SOURCES} ${IMGUI_SOURCES} "include/Graphics/DebugLine.h" "src/Graphics/DebugLine.cpp")
+add_executable(VerstappenEngine WIN32 ${SOURCES} ${IMGUI_SOURCES} "include/Graphics/DebugLine.h" "src/Graphics/DebugLine.cpp" "src/Core/PlatformTime.cpp")
 
 target_include_directories(VerstappenEngine PRIVATE
     "${CMAKE_CURRENT_SOURCE_DIR}/include"

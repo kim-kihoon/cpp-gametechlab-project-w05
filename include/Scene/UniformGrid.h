@@ -57,6 +57,7 @@ namespace Scene
     bool UUniformGrid::Raycast(const Math::FRay& Ray, float MaxDistance, uint32_t& OutHitIndex, float& OutHitDistance, NarrowPhaseFunc NarrowPhaseTest)
     {
         if (!SceneData || Cells.empty()) return false;
+        CurrentVisitToken++;
 
         int GridX = std::clamp(static_cast<int>((Ray.Origin.x - OriginX) * InvCellSize), 0, Width - 1);
         int GridY = std::clamp(static_cast<int>((Ray.Origin.y - OriginY) * InvCellSize), 0, Height - 1);
@@ -92,6 +93,8 @@ namespace Scene
                 {
                     const uint32_t Idx = Indices[i];
 
+                    if (VisitTokens[Idx] == CurrentVisitToken) continue;
+                    VisitTokens[Idx] = CurrentVisitToken;
                     // --- 1. AABB 광역 검사 (Broad Phase) ---
                     float t1 = (SceneData->MinX[Idx] - Ray.Origin.x) * Ray.InvDirection.x;
                     float t2 = (SceneData->MaxX[Idx] - Ray.Origin.x) * Ray.InvDirection.x;

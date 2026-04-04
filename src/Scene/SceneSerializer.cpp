@@ -78,10 +78,11 @@ namespace Scene
                 SceneData->IsVisible[Index] = true;
             }
 
-            if (UUniformGrid* Grid = InSceneManager.GetGrid())
-            {
-                Grid->BuildGrid();
-            }
+            // if (UUniformGrid* Grid = InSceneManager.GetGrid())
+            // {
+            //     Grid->BuildGrid();
+            // }
+            InSceneManager.BuildSceneBVH();
         }
 
         return File.good();

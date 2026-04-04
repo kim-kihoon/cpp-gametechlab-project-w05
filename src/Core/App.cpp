@@ -2,9 +2,7 @@
 #include <Core/PlatformTime.h>
 #include <Graphics/Renderer.h>
 
-// FPlatformTime 정적 멤버 정의 (링크 에러 방지)
-double Core::FPlatformTime::GSecondsPerCycle = 0.0;
-bool Core::FPlatformTime::bInitialized = false;
+#include <Scene/SceneTypes.h>
 #include <Math/Frustum.h>
 #include <Scene/AssetLoader.h>
 #include <Scene/SceneData.h>
@@ -18,6 +16,7 @@ bool Core::FPlatformTime::bInitialized = false;
 #include <limits>
 #include <sstream>
 #include <windowsx.h>
+
 
 namespace
 {
@@ -290,7 +289,7 @@ void UApp::Update(float InDeltaTime)
 
 void UApp::UniformCullingAndRenderCollect()
 {
-    if (SceneManager && SceneManager->GetGrid() != nullptr)
+    if (SceneManager)
     {
         Math::FMatrix View = BuildCameraViewMatrix(CameraState);
         Math::FMatrix Proj = BuildCameraProjectionMatrix(CameraState, ScreenWidth, ScreenHeight);
@@ -302,7 +301,8 @@ void UApp::UniformCullingAndRenderCollect()
         SceneData->ResetRenderQueue();
         SceneData->IsVisible.fill(false);
 
-        SceneManager->GetGrid()->QueryFrustum(
+        // UniformGrid 대신 SceneBVH를 사용합니다.
+        SceneManager->GetSceneBVH()->QueryFrustum(
             CameraFrustum,
             SceneData->RenderQueue.data(),
             SceneData->RenderCount,
@@ -318,7 +318,7 @@ void UApp::UniformCullingAndRenderCollect()
 
 void UApp::Picking()
 {
-    if (bPendingPick && SceneManager && SceneManager->GetGrid())
+    if (bPendingPick && SceneManager)
     {
         Math::FRay WorldRay = CalculatePickingRay(CameraState, PickPosition.x, PickPosition.y, ScreenWidth, ScreenHeight);
 
@@ -344,50 +344,27 @@ void UApp::Picking()
                 DirectX::XMVECTOR LocalDir = DirectX::XMVector3TransformNormal(DirectX::XMLoadFloat3(&WorldRay.Direction), InvWorld);
                 LocalDir = DirectX::XMVector3Normalize(LocalDir);
 
+                DirectX::XMFLOAT3 RayOrigin, RayDir;
+                DirectX::XMStoreFloat3(&RayOrigin, LocalOrigin);
+                DirectX::XMStoreFloat3(&RayDir, LocalDir);
+                Math::FRay LocalRay(RayOrigin, RayDir);
+
                 bool bHit = false;
                 float ClosestWorldT = OutHitDistance;
 
-                for (size_t i = 0; i < MeshRes->SourceIndices.size(); i += 3)
+                float LocalT = 0.0f;
+                if (MeshRes->Raycast(LocalRay, LocalT))
                 {
-                    uint32_t i0 = MeshRes->SourceIndices[i];
-                    uint32_t i1 = MeshRes->SourceIndices[i + 1];
-                    uint32_t i2 = MeshRes->SourceIndices[i + 2];
+                    DirectX::XMVECTOR LocalIntersection = DirectX::XMVectorAdd(LocalOrigin, DirectX::XMVectorScale(LocalDir, LocalT));
+                    DirectX::XMVECTOR WorldIntersection = DirectX::XMVector3TransformCoord(LocalIntersection, WorldMat);
 
-                    DirectX::XMVECTOR V0 = DirectX::XMLoadFloat3(&MeshRes->SourceVertices[i0].Position);
-                    DirectX::XMVECTOR V1 = DirectX::XMLoadFloat3(&MeshRes->SourceVertices[i1].Position);
-                    DirectX::XMVECTOR V2 = DirectX::XMLoadFloat3(&MeshRes->SourceVertices[i2].Position);
+                    DirectX::XMVECTOR DistVec = DirectX::XMVectorSubtract(WorldIntersection, DirectX::XMLoadFloat3(&WorldRay.Origin));
+                    float WorldT = DirectX::XMVectorGetX(DirectX::XMVector3Length(DistVec));
 
-                    DirectX::XMVECTOR Edge1 = DirectX::XMVectorSubtract(V1, V0);
-                    DirectX::XMVECTOR Edge2 = DirectX::XMVectorSubtract(V2, V0);
-                    DirectX::XMVECTOR H = DirectX::XMVector3Cross(LocalDir, Edge2);
-
-                    float A = DirectX::XMVectorGetX(DirectX::XMVector3Dot(Edge1, H));
-                    if (A > -0.00001f && A < 0.00001f) continue;
-
-                    float F = 1.0f / A;
-                    DirectX::XMVECTOR S = DirectX::XMVectorSubtract(LocalOrigin, V0);
-                    float U = F * DirectX::XMVectorGetX(DirectX::XMVector3Dot(S, H));
-                    if (U < 0.0f || U > 1.0f) continue;
-
-                    DirectX::XMVECTOR Q = DirectX::XMVector3Cross(S, Edge1);
-                    float V = F * DirectX::XMVectorGetX(DirectX::XMVector3Dot(LocalDir, Q));
-                    if (V < 0.0f || U + V > 1.0f) continue;
-
-                    float LocalT = F * DirectX::XMVectorGetX(DirectX::XMVector3Dot(Edge2, Q));
-
-                    if (LocalT > 0.00001f)
+                    if (WorldT < ClosestWorldT)
                     {
-                        DirectX::XMVECTOR LocalIntersection = DirectX::XMVectorAdd(LocalOrigin, DirectX::XMVectorScale(LocalDir, LocalT));
-                        DirectX::XMVECTOR WorldIntersection = DirectX::XMVector3TransformCoord(LocalIntersection, WorldMat);
-
-                        DirectX::XMVECTOR DistVec = DirectX::XMVectorSubtract(WorldIntersection, DirectX::XMLoadFloat3(&WorldRay.Origin));
-                        float WorldT = DirectX::XMVectorGetX(DirectX::XMVector3Length(DistVec));
-
-                        if (WorldT < ClosestWorldT)
-                        {
-                            ClosestWorldT = WorldT;
-                            bHit = true;
-                        }
+                        ClosestWorldT = WorldT;
+                        bHit = true;
                     }
                 }
 
@@ -398,7 +375,7 @@ void UApp::Picking()
         uint32_t HitIndex = 0;
         float HitDistance = 1000.0f; 
 
-        if (SceneManager->GetGrid()->Raycast(WorldRay, 1000.0f, HitIndex, HitDistance, PreciseTriangleTest))
+        if (SceneManager->GetSceneBVH()->Raycast(WorldRay, 1000.0f, HitIndex, HitDistance, PreciseTriangleTest))
         {
             SceneManager->SelectObject(HitIndex);
         }
