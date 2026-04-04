@@ -6,6 +6,11 @@
 #include <memory>
 #include <string>
 
+namespace Math
+{
+    struct FRay;
+}
+
 namespace Graphics { class URenderer; }
 namespace Scene { class USceneManager; }
 namespace UI { class UEditorLayer; }
@@ -27,6 +32,7 @@ private:
     void Update(float DeltaTime);
     void UniformCullingAndRenderCollect();
     void Picking();
+    bool CheckHit(const DirectX::XMFLOAT3& cameraPosition, const Math::FRay& pickRay, uint32_t& OutHitIndex);
     void Render();
     void UpdateFramePerformanceMetrics(float InDeltaTime);
     void UpdateCamera(float InDeltaTime);
@@ -51,4 +57,5 @@ private:
     bool bPendingPick = false;
     POINT PickPosition = { 0, 0 };
     uint64_t PickStartCycles = 0; // 클릭 발생 시점 사이클 저장
+    uint64_t TotalPickCount = 0;
 };

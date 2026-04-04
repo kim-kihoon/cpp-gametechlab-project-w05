@@ -320,6 +320,63 @@ void UApp::UniformCullingAndRenderCollect()
     }
 }
 
+bool UApp::CheckHit(const DirectX::XMFLOAT3& cameraPosition, const Math::FRay& pickRay, uint32_t& OutHitIndex)
+{
+    float HitDistance = 1000.0f;
+
+    auto PreciseTriangleTest = [&](uint32_t ObjIndex, float& OutHitDistance) -> bool
+        {
+            const Scene::FSceneDataSOA* SceneData = SceneManager->GetSceneData();
+            uint32_t MeshID = SceneData->MeshIDs[ObjIndex];
+
+            const auto* MeshRes = Renderer->GetMeshResource(MeshID);
+            if (!MeshRes || MeshRes->SourceIndices.empty()) return false;
+
+            const auto& PMat = SceneData->WorldMatrices[ObjIndex];
+            DirectX::XMMATRIX WorldMat = DirectX::XMMatrixSet(
+                DirectX::XMVectorGetX(PMat.Row0), DirectX::XMVectorGetY(PMat.Row0), DirectX::XMVectorGetZ(PMat.Row0), 0.0f,
+                DirectX::XMVectorGetX(PMat.Row1), DirectX::XMVectorGetY(PMat.Row1), DirectX::XMVectorGetZ(PMat.Row1), 0.0f,
+                DirectX::XMVectorGetX(PMat.Row2), DirectX::XMVectorGetY(PMat.Row2), DirectX::XMVectorGetZ(PMat.Row2), 0.0f,
+                DirectX::XMVectorGetW(PMat.Row0), DirectX::XMVectorGetW(PMat.Row1), DirectX::XMVectorGetW(PMat.Row2), 1.0f);
+
+            DirectX::XMVECTOR Det;
+            DirectX::XMMATRIX InvWorld = DirectX::XMMatrixInverse(&Det, WorldMat);
+
+            DirectX::XMVECTOR LocalOrigin = DirectX::XMVector3TransformCoord(DirectX::XMLoadFloat3(&pickRay.Origin), InvWorld);
+            DirectX::XMVECTOR LocalDir = DirectX::XMVector3TransformNormal(DirectX::XMLoadFloat3(&pickRay.Direction), InvWorld);
+            LocalDir = DirectX::XMVector3Normalize(LocalDir);
+
+            DirectX::XMFLOAT3 RayOrigin, RayDir;
+            DirectX::XMStoreFloat3(&RayOrigin, LocalOrigin);
+            DirectX::XMStoreFloat3(&RayDir, LocalDir);
+            Math::FRay LocalRay(RayOrigin, RayDir);
+
+            bool bHit = false;
+            float ClosestWorldT = OutHitDistance;
+
+            float LocalT = 0.0f;
+            if (MeshRes->Raycast(LocalRay, LocalT))
+            {
+                DirectX::XMVECTOR LocalIntersection = DirectX::XMVectorAdd(LocalOrigin, DirectX::XMVectorScale(LocalDir, LocalT));
+                DirectX::XMVECTOR WorldIntersection = DirectX::XMVector3TransformCoord(LocalIntersection, WorldMat);
+
+                DirectX::XMVECTOR DistVec = DirectX::XMVectorSubtract(WorldIntersection, DirectX::XMLoadFloat3(&pickRay.Origin));
+                float WorldT = DirectX::XMVectorGetX(DirectX::XMVector3Length(DistVec));
+
+                if (WorldT < ClosestWorldT)
+                {
+                    ClosestWorldT = WorldT;
+                    bHit = true;
+                }
+            }
+
+            if (bHit) OutHitDistance = ClosestWorldT;
+            return bHit;
+        };
+
+    return SceneManager->GetSceneBVH()->Raycast(pickRay, 1000.0f, OutHitIndex, HitDistance, PreciseTriangleTest);
+}
+
 void UApp::Picking()
 {
     if (bPendingPick && SceneManager)
@@ -327,62 +384,25 @@ void UApp::Picking()
         Core::GPerformanceMetrics.BVHNodeTestCount = 0;
         Core::GPerformanceMetrics.ObjectAABBTestCount = 0;
 
-        Math::FRay WorldRay = CalculatePickingRay(CameraState, PickPosition.x, PickPosition.y, ScreenWidth, ScreenHeight);
+        // 1) 마우스 화면 좌표 획득
+        int screenX = PickPosition.x;
+        int screenY = PickPosition.y;
 
-        auto PreciseTriangleTest = [&](uint32_t ObjIndex, float& OutHitDistance) -> bool
-            {
-                const Scene::FSceneDataSOA* SceneData = SceneManager->GetSceneData();
-                uint32_t MeshID = SceneData->MeshIDs[ObjIndex];
+        // 2) 화면 좌표 -> 월드 좌표로의 픽 레이(Pick Ray) 계산
+        Math::FRay pickRay = CalculatePickingRay(CameraState, screenX, screenY, ScreenWidth, ScreenHeight);
 
-                const auto* MeshRes = Renderer->GetMeshResource(MeshID);
-                if (!MeshRes || MeshRes->SourceIndices.empty()) return false;
+        // 3) 퍼포먼스 측정용 카운터 시작
+        Core::FScopeCycleCounter pickCounter(Core::TStatId{});
 
-                const auto& PMat = SceneData->WorldMatrices[ObjIndex];
-                DirectX::XMMATRIX WorldMat = DirectX::XMMatrixSet(
-                    DirectX::XMVectorGetX(PMat.Row0), DirectX::XMVectorGetY(PMat.Row0), DirectX::XMVectorGetZ(PMat.Row0), 0.0f,
-                    DirectX::XMVectorGetX(PMat.Row1), DirectX::XMVectorGetY(PMat.Row1), DirectX::XMVectorGetZ(PMat.Row1), 0.0f,
-                    DirectX::XMVectorGetX(PMat.Row2), DirectX::XMVectorGetY(PMat.Row2), DirectX::XMVectorGetZ(PMat.Row2), 0.0f,
-                    DirectX::XMVectorGetW(PMat.Row0), DirectX::XMVectorGetW(PMat.Row1), DirectX::XMVectorGetW(PMat.Row2), 1.0f);
+        // 4) 전체 Picking 횟수 누적
+        ++TotalPickCount;
 
-                DirectX::XMVECTOR Det;
-                DirectX::XMMATRIX InvWorld = DirectX::XMMatrixInverse(&Det, WorldMat);
-
-                DirectX::XMVECTOR LocalOrigin = DirectX::XMVector3TransformCoord(DirectX::XMLoadFloat3(&WorldRay.Origin), InvWorld);
-                DirectX::XMVECTOR LocalDir = DirectX::XMVector3TransformNormal(DirectX::XMLoadFloat3(&WorldRay.Direction), InvWorld);
-                LocalDir = DirectX::XMVector3Normalize(LocalDir);
-
-                DirectX::XMFLOAT3 RayOrigin, RayDir;
-                DirectX::XMStoreFloat3(&RayOrigin, LocalOrigin);
-                DirectX::XMStoreFloat3(&RayDir, LocalDir);
-                Math::FRay LocalRay(RayOrigin, RayDir);
-
-                bool bHit = false;
-                float ClosestWorldT = OutHitDistance;
-
-                float LocalT = 0.0f;
-                if (MeshRes->Raycast(LocalRay, LocalT))
-                {
-                    DirectX::XMVECTOR LocalIntersection = DirectX::XMVectorAdd(LocalOrigin, DirectX::XMVectorScale(LocalDir, LocalT));
-                    DirectX::XMVECTOR WorldIntersection = DirectX::XMVector3TransformCoord(LocalIntersection, WorldMat);
-
-                    DirectX::XMVECTOR DistVec = DirectX::XMVectorSubtract(WorldIntersection, DirectX::XMLoadFloat3(&WorldRay.Origin));
-                    float WorldT = DirectX::XMVectorGetX(DirectX::XMVector3Length(DistVec));
-
-                    if (WorldT < ClosestWorldT)
-                    {
-                        ClosestWorldT = WorldT;
-                        bHit = true;
-                    }
-                }
-
-                if (bHit) OutHitDistance = ClosestWorldT;
-                return bHit;
-            };
-
+        // 5) 모든 오브젝트(프리미티브)에 대해 충돌 판정
         uint32_t HitIndex = 0;
-        float HitDistance = 1000.0f; 
+        bool isHit = CheckHit(CameraState.Position, pickRay, HitIndex);
 
-        if (SceneManager->GetSceneBVH()->Raycast(WorldRay, 1000.0f, HitIndex, HitDistance, PreciseTriangleTest))
+        // 필요 시 'isHit' 결과를 활용해 추가 로직 처리
+        if (isHit)
         {
             SceneManager->SelectObject(HitIndex);
         }
@@ -391,8 +411,10 @@ void UApp::Picking()
             SceneManager->ClearSelection();
         }
 
-        // 전체 소요 시간 기록: 현재 사이클 - 클릭 시작 사이클
-        Core::GPerformanceMetrics.LastPickingCycles = Core::FPlatformTime::Cycles64() - PickStartCycles;
+        // 6) 퍼포먼스 측정 종료 및 시간 누적
+        uint64_t LastPickTime = pickCounter.Finish();
+        Core::GPerformanceMetrics.LastPickingCycles = LastPickTime;
+        Core::GPerformanceMetrics.TotalPickingCycles += LastPickTime;
 
         bPendingPick = false;
     }
