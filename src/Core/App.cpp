@@ -4,6 +4,7 @@
 #include <Scene/AssetLoader.h>
 #include <Scene/SceneData.h>
 #include <Scene/SceneManager.h>
+#include <Math/MathTypes.h>
 #include <Scene/SceneSerializer.h>
 #include <UI/EditorLayer.h>
 #include <algorithm>
@@ -137,6 +138,26 @@ namespace
         InOutCameraState.FarClip = (std::max)(InOutCameraState.FarClip, CameraDistance + BoundingRadius + 16.0f);
         InOutCameraState.NearClip = 0.1f;
     }
+
+    Math::FRay CalculatePickingRay(const Graphics::FCameraState& Camera, int MouseX, int MouseY, int ScreenWidth, int ScreenHeight)
+    {
+        float ptX = (2.0f * static_cast<float>(MouseX)) / static_cast<float>(ScreenWidth) - 1.0f;
+        float ptY = 1.0f - (2.0f * static_cast<float>(MouseY)) / static_cast<float>(ScreenHeight);
+
+        Math::FMatrix view = BuildCameraViewMatrix(Camera);
+        Math::FMatrix proj = BuildCameraProjectionMatrix(Camera, ScreenWidth, ScreenHeight);
+        DirectX::XMMATRIX invViewProj = DirectX::XMMatrixInverse(nullptr, view * proj);
+
+        DirectX::XMVECTOR nearPtVec = DirectX::XMVector3TransformCoord(DirectX::XMVectorSet(ptX, ptY, 0.0f, 1.0f), invViewProj);
+        DirectX::XMVECTOR farPtVec = DirectX::XMVector3TransformCoord(DirectX::XMVectorSet(ptX, ptY, 1.0f, 1.0f), invViewProj);
+        DirectX::XMVECTOR dirVec = DirectX::XMVectorSubtract(farPtVec, nearPtVec);
+
+        DirectX::XMFLOAT3 origin, direction;
+        DirectX::XMStoreFloat3(&origin, nearPtVec);
+        DirectX::XMStoreFloat3(&direction, dirVec);
+
+        return Math::FRay(origin, direction);
+    }
 }
 
 UApp::UApp()
@@ -176,12 +197,18 @@ bool UApp::Initialize(HINSTANCE InHInstance, int InCmdShow)
     WNDCLASSEXW WindowClass = { sizeof(WNDCLASSEXW), CS_CLASSDC, UApp::WindowProc, 0L, 0L, InstanceHandle, nullptr, nullptr, nullptr, nullptr, L"VerstappenEngineClass", nullptr };
     ::RegisterClassExW(&WindowClass);
 
-    DWORD WindowStyle;
+    DWORD WindowStyle = WS_OVERLAPPEDWINDOW;
     ScreenWidth = 1920;
     ScreenHeight = 1080;
-    WindowStyle = WS_OVERLAPPEDWINDOW;
+    RECT WindowRect = { 0, 0, ScreenWidth, ScreenHeight };
 
-    WindowHandle = ::CreateWindowW(WindowClass.lpszClassName, AppName.c_str(), WindowStyle, CW_USEDEFAULT, CW_USEDEFAULT, ScreenWidth, ScreenHeight, nullptr, nullptr, InstanceHandle, this);
+    ::AdjustWindowRect(&WindowRect, WindowStyle, FALSE);
+
+    int ActualWidth = WindowRect.right - WindowRect.left;
+    int ActualHeight = WindowRect.bottom - WindowRect.top;
+
+    WindowHandle = ::CreateWindowW(WindowClass.lpszClassName, AppName.c_str(), WindowStyle,
+        CW_USEDEFAULT, CW_USEDEFAULT, ActualWidth, ActualHeight, nullptr, nullptr, InstanceHandle, this);
     if (!WindowHandle) return false;
 
     ::SetWindowLongPtrW(WindowHandle, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(this));
@@ -250,6 +277,8 @@ void UApp::Update(float InDeltaTime)
     UniformCullingAndRenderCollect();
 
 	UpdateFramePerformanceMetrics(InDeltaTime);
+
+    Picking();
 	SceneManager->Update(InDeltaTime);
 	EditorLayer->Update(InDeltaTime);
 }
@@ -279,6 +308,101 @@ void UApp::UniformCullingAndRenderCollect()
         {
             SceneData->IsVisible[SceneData->RenderQueue[QueueIndex]] = true;
         }
+    }
+}
+
+void UApp::Picking()
+{
+    if (bPendingPick && SceneManager && SceneManager->GetGrid())
+    {
+        Math::FRay WorldRay = CalculatePickingRay(CameraState, PickPosition.x, PickPosition.y, ScreenWidth, ScreenHeight);
+
+        auto PreciseTriangleTest = [&](uint32_t ObjIndex, float& OutHitDistance) -> bool
+            {
+                const Scene::FSceneDataSOA* SceneData = SceneManager->GetSceneData();
+                uint32_t MeshID = SceneData->MeshIDs[ObjIndex];
+
+                const auto* MeshRes = Renderer->GetMeshResource(MeshID);
+                if (!MeshRes || MeshRes->SourceIndices.empty()) return false;
+
+                const auto& PMat = SceneData->WorldMatrices[ObjIndex];
+                DirectX::XMMATRIX WorldMat = DirectX::XMMatrixSet(
+                    DirectX::XMVectorGetX(PMat.Row0), DirectX::XMVectorGetY(PMat.Row0), DirectX::XMVectorGetZ(PMat.Row0), 0.0f,
+                    DirectX::XMVectorGetX(PMat.Row1), DirectX::XMVectorGetY(PMat.Row1), DirectX::XMVectorGetZ(PMat.Row1), 0.0f,
+                    DirectX::XMVectorGetX(PMat.Row2), DirectX::XMVectorGetY(PMat.Row2), DirectX::XMVectorGetZ(PMat.Row2), 0.0f,
+                    DirectX::XMVectorGetW(PMat.Row0), DirectX::XMVectorGetW(PMat.Row1), DirectX::XMVectorGetW(PMat.Row2), 1.0f);
+
+                DirectX::XMVECTOR Det;
+                DirectX::XMMATRIX InvWorld = DirectX::XMMatrixInverse(&Det, WorldMat);
+
+                DirectX::XMVECTOR LocalOrigin = DirectX::XMVector3TransformCoord(DirectX::XMLoadFloat3(&WorldRay.Origin), InvWorld);
+                DirectX::XMVECTOR LocalDir = DirectX::XMVector3TransformNormal(DirectX::XMLoadFloat3(&WorldRay.Direction), InvWorld);
+                LocalDir = DirectX::XMVector3Normalize(LocalDir);
+
+                bool bHit = false;
+                float ClosestWorldT = OutHitDistance;
+
+                for (size_t i = 0; i < MeshRes->SourceIndices.size(); i += 3)
+                {
+                    uint32_t i0 = MeshRes->SourceIndices[i];
+                    uint32_t i1 = MeshRes->SourceIndices[i + 1];
+                    uint32_t i2 = MeshRes->SourceIndices[i + 2];
+
+                    DirectX::XMVECTOR V0 = DirectX::XMLoadFloat3(&MeshRes->SourceVertices[i0].Position);
+                    DirectX::XMVECTOR V1 = DirectX::XMLoadFloat3(&MeshRes->SourceVertices[i1].Position);
+                    DirectX::XMVECTOR V2 = DirectX::XMLoadFloat3(&MeshRes->SourceVertices[i2].Position);
+
+                    DirectX::XMVECTOR Edge1 = DirectX::XMVectorSubtract(V1, V0);
+                    DirectX::XMVECTOR Edge2 = DirectX::XMVectorSubtract(V2, V0);
+                    DirectX::XMVECTOR H = DirectX::XMVector3Cross(LocalDir, Edge2);
+
+                    float A = DirectX::XMVectorGetX(DirectX::XMVector3Dot(Edge1, H));
+                    if (A > -0.00001f && A < 0.00001f) continue;
+
+                    float F = 1.0f / A;
+                    DirectX::XMVECTOR S = DirectX::XMVectorSubtract(LocalOrigin, V0);
+                    float U = F * DirectX::XMVectorGetX(DirectX::XMVector3Dot(S, H));
+                    if (U < 0.0f || U > 1.0f) continue;
+
+                    DirectX::XMVECTOR Q = DirectX::XMVector3Cross(S, Edge1);
+                    float V = F * DirectX::XMVectorGetX(DirectX::XMVector3Dot(LocalDir, Q));
+                    if (V < 0.0f || U + V > 1.0f) continue;
+
+                    float LocalT = F * DirectX::XMVectorGetX(DirectX::XMVector3Dot(Edge2, Q));
+
+                    if (LocalT > 0.00001f)
+                    {
+                        DirectX::XMVECTOR LocalIntersection = DirectX::XMVectorAdd(LocalOrigin, DirectX::XMVectorScale(LocalDir, LocalT));
+                        DirectX::XMVECTOR WorldIntersection = DirectX::XMVector3TransformCoord(LocalIntersection, WorldMat);
+
+                        DirectX::XMVECTOR DistVec = DirectX::XMVectorSubtract(WorldIntersection, DirectX::XMLoadFloat3(&WorldRay.Origin));
+                        float WorldT = DirectX::XMVectorGetX(DirectX::XMVector3Length(DistVec));
+
+                        if (WorldT < ClosestWorldT)
+                        {
+                            ClosestWorldT = WorldT;
+                            bHit = true;
+                        }
+                    }
+                }
+
+                if (bHit) OutHitDistance = ClosestWorldT;
+                return bHit;
+            };
+
+        uint32_t HitIndex = 0;
+        float HitDistance = 1000.0f; 
+
+        if (SceneManager->GetGrid()->Raycast(WorldRay, 1000.0f, HitIndex, HitDistance, PreciseTriangleTest))
+        {
+            SceneManager->SelectObject(HitIndex);
+        }
+        else
+        {
+            SceneManager->ClearSelection();
+        }
+
+        bPendingPick = false;
     }
 }
 
@@ -360,6 +484,17 @@ LRESULT CALLBACK UApp::WindowProc(HWND hWnd, UINT Message, WPARAM wParam, LPARAM
 
     switch (Message)
     {
+    case WM_SIZE:
+        if (AppInstance != nullptr && wParam != SIZE_MINIMIZED)
+        {
+            AppInstance->ScreenWidth = LOWORD(lParam);
+            AppInstance->ScreenHeight = HIWORD(lParam);
+            if (AppInstance->Renderer)
+            {
+                AppInstance->Renderer->Resize(AppInstance->ScreenWidth, AppInstance->ScreenHeight);
+            }
+        }
+        return 0;
     case WM_RBUTTONDOWN:
         if (AppInstance != nullptr)
         {
@@ -367,6 +502,14 @@ LRESULT CALLBACK UApp::WindowProc(HWND hWnd, UINT Message, WPARAM wParam, LPARAM
             AppInstance->LastMousePosition.x = GET_X_LPARAM(lParam);
             AppInstance->LastMousePosition.y = GET_Y_LPARAM(lParam);
             ::SetCapture(hWnd);
+        }
+        return 0;
+    case WM_LBUTTONDOWN:
+        if (AppInstance != nullptr)
+        {
+            AppInstance->bPendingPick = true;
+            AppInstance->PickPosition.x = GET_X_LPARAM(lParam);
+            AppInstance->PickPosition.y = GET_Y_LPARAM(lParam);
         }
         return 0;
     case WM_RBUTTONUP:
