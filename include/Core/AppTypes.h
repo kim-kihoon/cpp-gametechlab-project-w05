@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include <cstdint>
 
 namespace Core
@@ -10,10 +10,11 @@ namespace Core
     {
         float DeltaTimeSeconds = 0.0f;
         float FramesPerSecond = 0.0f;
-        float ElapsedTimeMilliseconds = 0.0f;
-        float LastPickingTimeMilliseconds = 0.0f;
-        float AccumulatedPickingTimeMilliseconds = 0.0f;
-        uint32_t TotalPickingAttempts = 0;
+        
+        // Picking 관련 정밀 계측 (Cycles 단위)
+        uint64_t LastPickingCycles = 0;
+        uint64_t TotalPickingCycles = 0;
+
         uint64_t FrameIndex = 0;
     };
 }

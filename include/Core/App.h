@@ -50,5 +50,6 @@ private:
     bool bIsCOMInitialized = false;
     bool bPendingPick = false;
     POINT PickPosition = { 0, 0 };
+    uint64_t PickStartCycles = 0; // 클릭 발생 시점 사이클 저장
     Core::FFramePerformanceMetrics FramePerformanceMetrics;
 };
