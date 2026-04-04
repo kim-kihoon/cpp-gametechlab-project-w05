@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include <Math/MathTypes.h>
 #include <array>
 #include <malloc.h>
@@ -33,6 +33,7 @@ namespace Scene
 
         // Render Queue
         alignas(64) std::array<uint32_t, MAX_OBJECTS> RenderQueue;
+        uint32_t TotalObjectCount = 0;      // 오브젝트의 총 개수 -> Add가 될 시 추가 필요.
         uint32_t RenderCount = 0;
 
         void* operator new(size_t size) { return _aligned_malloc(size, 64); }

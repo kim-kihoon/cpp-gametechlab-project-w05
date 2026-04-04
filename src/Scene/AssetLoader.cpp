@@ -123,13 +123,15 @@ namespace Scene
                 SpawnRequest.MeshID = MeshID;
                 SpawnRequest.MaterialID = MeshID;
                 SpawnRequest.WorldMatrix = DirectX::XMMatrixTranslation(LocationX, LocationY, LocationZ);
-                InSceneManager.SpawnStaticMesh(SpawnRequest);
+                InSceneManager.SpawnStaticMesh(SpawnRequest, false);
 
                 bInsidePrimitive = false;
                 bHasLocation = false;
                 MeshID = 0;
             }
         }
+
+		if (InSceneManager.GetGrid()) { InSceneManager.GetGrid()->BuildGrid(); }
 
         return InSceneManager.GetSceneStatistics().TotalObjectCount > 0;
     }

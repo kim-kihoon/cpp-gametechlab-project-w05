@@ -1,4 +1,4 @@
-#include <Scene/SceneSerializer.h>
+﻿#include <Scene/SceneSerializer.h>
 #include <Scene/SceneManager.h>
 #include <Core/PathManager.h>
 #include <fstream>
@@ -80,11 +80,7 @@ namespace Scene
 
             if (UUniformGrid* Grid = InSceneManager.GetGrid())
             {
-                Grid->ClearGrid();
-                for (uint32_t Index = 0; Index < Count; ++Index)
-                {
-                    Grid->InsertObject(Index);
-                }
+                Grid->BuildGrid();
             }
         }
 

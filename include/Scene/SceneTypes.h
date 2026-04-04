@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include <Math/MathTypes.h>
 #include <cstdint>
 #include <DirectXMath.h>
@@ -43,10 +43,10 @@ namespace Scene
 
     /**
      * 씬 상태 요약 정보를 저장하는 구조체.
-     */
-    struct FSceneStatistics
-    {
-        uint32_t TotalObjectCount = 0;
-        uint32_t VisibleObjectCount = 0;
-    };
+	 */
+	struct FSceneStatistics
+	{
+		uint32_t TotalObjectCount = 0;
+		uint32_t VisibleObjectCount = 0;
+	};
 }
