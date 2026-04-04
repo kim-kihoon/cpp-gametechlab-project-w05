@@ -25,6 +25,8 @@ namespace Graphics
         struct FPerFrameConstants
         {
             DirectX::XMFLOAT4X4 ViewProj;
+            DirectX::XMFLOAT4 CamRight;
+            DirectX::XMFLOAT4 CamUp;
         };
 
         struct FPerObjectConstants
@@ -483,7 +485,8 @@ namespace Graphics
 
             float4 PSMain(PS_IN i) : SV_TARGET
             {
-                return DiffuseTexture.Sample(DiffuseSampler, i.TexCoord) * BaseColor;
+                float4 color = DiffuseTexture.Sample(DiffuseSampler, i.TexCoord) * BaseColor;
+                return float4(color.rgb, 1.0f);
             }
         )";
 
@@ -526,11 +529,191 @@ namespace Graphics
         const std::wstring MeshBasePath = Core::FPathManager::GetMeshPath();
         if (!LoadMeshResource(Device.Get(), MeshBasePath + L"apple_mid.obj", MeshResources[0])) return false;
         if (!LoadMeshResource(Device.Get(), MeshBasePath + L"bitten_apple_mid.obj", MeshResources[1])) return false;
+        const char* BillboardShaderSrc = R"(
+            cbuffer PerFrame : register(b0) { 
+                row_major float4x4 ViewProj; 
+                float4 CamRight; 
+                float4 CamUp; 
+            };
+            cbuffer PerObject : register(b1) { float4 Row0; float4 Row1; float4 Row2; float4 Padding; };
+            Texture2D Snapshot : register(t0);
+            SamplerState DiffuseSampler : register(s0);
+
+            struct VS_IN { float3 Pos : POSITION; float2 TexCoord : TEXCOORD0; };
+            struct PS_IN { float4 Pos : SV_POSITION; float2 TexCoord : TEXCOORD0; };
+
+            PS_IN VSMain(VS_IN i) {
+                PS_IN o;
+                // 1. 행렬에서 월드 위치 추출 (Row-major 3x4 저장 방식에 따라 마지막 열 수집)
+                float3 WorldPos = float3(Row0.w, Row1.w, Row2.w);
+                
+                // 2. 행렬에서 객체의 스케일 추출
+                float scaleX = length(float3(Row0.x, Row1.x, Row2.x));
+                float scaleY = length(float3(Row0.y, Row1.y, Row2.y));
+
+                // 3. BakeImpostor의 Ortho 크기(3.0) 보정
+                float OrthoSize = 3.0f;
+
+                // 4. 빌보드 매직: 원래 회전을 무시하고 무조건 카메라를 바라보게 사각형 전개
+                // i.Pos.x, i.Pos.z는 [-0.5, 0.5] 범위임
+                float3 finalPos = WorldPos 
+                                + (i.Pos.x * scaleX * OrthoSize * CamRight.xyz) 
+                                + (i.Pos.z * scaleY * OrthoSize * CamUp.xyz);
+
+                o.Pos = mul(float4(finalPos, 1.0f), ViewProj);
+                o.TexCoord = i.TexCoord;
+                return o;
+            }
+
+            float4 PSMain(PS_IN i) : SV_TARGET {
+                float4 color = Snapshot.Sample(DiffuseSampler, i.TexCoord);
+                if (color.a < 0.1f) discard;
+                return color;
+            }
+        )";
+
+        if (FAILED(D3DCompile(BillboardShaderSrc, std::strlen(BillboardShaderSrc), nullptr, nullptr, nullptr, "VSMain", "vs_5_0", 0, 0, &VS, &Err))) return false;
+        if (FAILED(D3DCompile(BillboardShaderSrc, std::strlen(BillboardShaderSrc), nullptr, nullptr, nullptr, "PSMain", "ps_5_0", 0, 0, &PS, &Err))) return false;
+        if (FAILED(Device->CreateVertexShader(VS->GetBufferPointer(), VS->GetBufferSize(), nullptr, &BillboardVS))) return false;
+        if (FAILED(Device->CreatePixelShader(PS->GetBufferPointer(), PS->GetBufferSize(), nullptr, &BillboardPS))) return false;
+
+        D3D11_INPUT_ELEMENT_DESC BBLayout[] = {
+            { "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0 },
+            { "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 12, D3D11_INPUT_PER_VERTEX_DATA, 0 },
+        };
+        if (FAILED(Device->CreateInputLayout(BBLayout, static_cast<UINT>(std::size(BBLayout)), VS->GetBufferPointer(), VS->GetBufferSize(), &BillboardLayout))) return false;
+
+        FBillboardVertex BBVertices[] = {
+            { {-0.5f, 0.0f,  0.5f}, {0, 0} }, { { 0.5f, 0.0f,  0.5f}, {1, 0} },
+            { {-0.5f, 0.0f, -0.5f}, {0, 1} }, { { 0.5f, 0.0f, -0.5f}, {1, 1} }
+        };
+        D3D11_BUFFER_DESC BBVBDesc = { sizeof(BBVertices), D3D11_USAGE_DEFAULT, D3D11_BIND_VERTEX_BUFFER, 0, 0, 0 };
+        D3D11_SUBRESOURCE_DATA BBVData = { BBVertices, 0, 0 };
+        if (FAILED(Device->CreateBuffer(&BBVBDesc, &BBVData, &BillboardVB))) return false;
+
+        uint32_t BBIndices[] = { 0, 1, 2, 2, 1, 3 };
+        D3D11_BUFFER_DESC BBIBDesc = { sizeof(BBIndices), D3D11_USAGE_DEFAULT, D3D11_BIND_INDEX_BUFFER, 0, 0, 0 };
+        D3D11_SUBRESOURCE_DATA BBIData = { BBIndices, 0, 0 };
+        if (FAILED(Device->CreateBuffer(&BBIBDesc, &BBIData, &BillboardIB))) return false;
+
         if (!MeshResources[0].DiffuseTextureView) MeshResources[0].DiffuseTextureView = DefaultWhiteTextureView;
         if (!MeshResources[1].DiffuseTextureView) MeshResources[1].DiffuseTextureView = DefaultWhiteTextureView;
 
+        BakeImpostor(0);
+        BakeImpostor(1);
+
         return true;
     }
+
+    void URenderer::BakeImpostor(uint32_t MeshID)
+    {
+        const uint32_t Res = 256;
+        
+        // 1. 임포스터용 텍스처 및 RTV, SRV 생성
+        D3D11_TEXTURE2D_DESC td = {};
+        td.Width = td.Height = Res; td.MipLevels = 1; td.ArraySize = 1;
+        td.Format = DXGI_FORMAT_R8G8B8A8_UNORM; td.SampleDesc.Count = 1;
+        td.Usage = D3D11_USAGE_DEFAULT; td.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+        
+        ComPtr<ID3D11Texture2D> tex;
+        if (FAILED(Device->CreateTexture2D(&td, nullptr, &tex))) return;
+        
+        ComPtr<ID3D11RenderTargetView> rtv;
+        if (FAILED(Device->CreateRenderTargetView(tex.Get(), nullptr, &rtv))) return;
+        
+        ComPtr<ID3D11ShaderResourceView> srv;
+        if (FAILED(Device->CreateShaderResourceView(tex.Get(), nullptr, &srv))) return;
+
+        // 2. 임포스터 전용 깊이 버퍼 생성
+        D3D11_TEXTURE2D_DESC dd = {};
+        dd.Width = dd.Height = Res; dd.MipLevels = 1; dd.ArraySize = 1;
+        dd.Format = DXGI_FORMAT_D24_UNORM_S8_UINT; dd.SampleDesc.Count = 1;
+        dd.Usage = D3D11_USAGE_DEFAULT; dd.BindFlags = D3D11_BIND_DEPTH_STENCIL;
+        ComPtr<ID3D11Texture2D> depthTex;
+        Device->CreateTexture2D(&dd, nullptr, &depthTex);
+        ComPtr<ID3D11DepthStencilView> dsv;
+        Device->CreateDepthStencilView(depthTex.Get(), nullptr, &dsv);
+
+        // 3. [핵심] 사과의 진짜 중심점(AABB)을 계산하여 중앙 정렬 행렬 생성
+        const auto& verts = MeshResources[MeshID].SourceVertices;
+        float minX = 1e9f, minY = 1e9f, minZ = 1e9f;
+        float maxX = -1e9f, maxY = -1e9f, maxZ = -1e9f;
+        for (const auto& v : verts) {
+            minX = (std::min)(minX, v.Position.x); minY = (std::min)(minY, v.Position.y); minZ = (std::min)(minZ, v.Position.z);
+            maxX = (std::max)(maxX, v.Position.x); maxY = (std::max)(maxY, v.Position.y); maxZ = (std::max)(maxZ, v.Position.z);
+        }
+        float cx = (minX + maxX) * 0.5f;
+        float cy = (minY + maxY) * 0.5f;
+        float cz = (minZ + maxZ) * 0.5f;
+
+        DirectX::XMMATRIX objMat = DirectX::XMMatrixTranslation(-cx, -cy, -cz);
+        if (MeshID == 1) objMat *= DirectX::XMMatrixRotationZ(DirectX::XM_PI);
+
+        // 4. 카메라 세팅 (넉넉한 2.5 화각)
+        float OrthoSize = 2.5f; 
+        DirectX::XMVECTOR eye = DirectX::XMVectorSet(1.5f, -2.5f, 0.5f, 0);
+        DirectX::XMVECTOR at = DirectX::XMVectorSet(0, 0, 0, 0); 
+        DirectX::XMVECTOR up = DirectX::XMVectorSet(0, 0, 1, 0);
+        DirectX::XMMATRIX view = DirectX::XMMatrixLookAtLH(eye, at, up);
+        DirectX::XMMATRIX proj = DirectX::XMMatrixOrthographicLH(OrthoSize, OrthoSize, 0.1f, 10.0f);
+        
+        // 5. 상태 설정 및 클리어
+        float clear[4] = {0, 0, 0, 0};
+        Context->ClearRenderTargetView(rtv.Get(), clear);
+        Context->ClearDepthStencilView(dsv.Get(), D3D11_CLEAR_DEPTH, 1.0f, 0);
+        Context->OMSetRenderTargets(1, rtv.GetAddressOf(), dsv.Get());
+        
+        D3D11_VIEWPORT vp = {0, 0, (float)Res, (float)Res, 0, 1};
+        Context->RSSetViewports(1, &vp);
+        Context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        Context->RSSetState(DefaultRasterizerState.Get());
+        Context->OMSetDepthStencilState(DefaultDepthStencilState.Get(), 0);
+        
+        // 6. 상수 버퍼 업데이트
+        D3D11_MAPPED_SUBRESOURCE m = {};
+        if (SUCCEEDED(Context->Map(PerFrameBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &m))) {
+            FPerFrameConstants pf = {}; DirectX::XMStoreFloat4x4(&pf.ViewProj, view * proj);
+            std::memcpy(m.pData, &pf, sizeof(pf)); Context->Unmap(PerFrameBuffer.Get(), 0);
+        }
+        if (SUCCEEDED(Context->Map(PerObjectBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &m))) {
+            FPerObjectConstants po = {};
+            DirectX::XMStoreFloat4(&po.Row0, objMat.r[0]);
+            DirectX::XMStoreFloat4(&po.Row1, objMat.r[1]);
+            DirectX::XMStoreFloat4(&po.Row2, objMat.r[2]);
+            po.Padding = { 0, 0, 0, 1 };
+            std::memcpy(m.pData, &po, sizeof(po)); Context->Unmap(PerObjectBuffer.Get(), 0);
+        }
+        if (SUCCEEDED(Context->Map(MaterialBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &m))) {
+            FMaterialConstants mc = { { 1, 1, 1, 1 } };
+            std::memcpy(m.pData, &mc, sizeof(mc)); Context->Unmap(MaterialBuffer.Get(), 0);
+        }
+
+        // 7. 파이프라인 바인딩 및 드로우
+        Context->IASetInputLayout(InputLayout.Get());
+        Context->VSSetShader(VertexShader.Get(), nullptr, 0);
+        Context->PSSetShader(PixelShader.Get(), nullptr, 0);
+        Context->VSSetConstantBuffers(0, 1, PerFrameBuffer.GetAddressOf());
+        Context->VSSetConstantBuffers(1, 1, PerObjectBuffer.GetAddressOf());
+        Context->PSSetConstantBuffers(2, 1, MaterialBuffer.GetAddressOf());
+        Context->PSSetSamplers(0, 1, DiffuseSamplerState.GetAddressOf());
+        
+        const FMeshResource& res = MeshResources[MeshID];
+        ID3D11ShaderResourceView* dsrv = res.DiffuseTextureView.Get();
+        Context->PSSetShaderResources(0, 1, &dsrv);
+        
+        UINT s = sizeof(FMeshVertex), o = 0;
+        Context->IASetVertexBuffers(0, 1, res.VertexBuffer.GetAddressOf(), &s, &o);
+        Context->IASetIndexBuffer(res.IndexBuffer.Get(), DXGI_FORMAT_R32_UINT, 0);
+        Context->DrawIndexed(res.IndexCount, 0, 0);
+        
+        ImpostorResources[MeshID].SnapshotTexture = tex;
+        ImpostorResources[MeshID].SnapshotSRV = srv;
+        ImpostorResources[MeshID].bIsBaked = true;
+
+        ID3D11RenderTargetView* nullRTV = nullptr;
+        Context->OMSetRenderTargets(1, &nullRTV, nullptr);
+    }
+
 
     void URenderer::BeginFrame()
     {
@@ -562,69 +745,99 @@ namespace Graphics
         uint8_t* DestStart = static_cast<uint8_t*>(PerObjectMap.pData) + PerObjectRingBufferOffset;
         const uint32_t BaseFrameOffset = PerObjectRingBufferOffset;
 
+        // [최적화] 메쉬 종류별로 객체 정렬 (메쉬 0~9, 빌보드 10~19)
         static uint32_t SortedQueue[Scene::FSceneDataSOA::MAX_OBJECTS];
-        uint32_t MeshCounts[MAX_MESH_TYPES] = { 0 }, MeshOffsets[MAX_MESH_TYPES] = { 0 };
-        for (uint32_t i = 0; i < SourceCount; ++i) { uint32_t mid = SceneData->MeshIDs[SceneData->RenderQueue[i]]; if (mid < MAX_MESH_TYPES) MeshCounts[mid]++; }
-        uint32_t cur = 0; for (uint32_t i = 0; i < MAX_MESH_TYPES; ++i) { MeshOffsets[i] = cur; cur += MeshCounts[i]; }
-        uint32_t TempOffsets[MAX_MESH_TYPES]; std::memcpy(TempOffsets, MeshOffsets, sizeof(MeshOffsets));
+        uint32_t GroupCounts[20] = { 0 }, GroupOffsets[20] = { 0 };
+        for (uint32_t i = 0; i < SourceCount; ++i) { 
+            uint32_t mid = SceneData->MeshIDs[SceneData->RenderQueue[i]]; 
+            if (mid < 20) GroupCounts[mid]++; 
+        }
+        uint32_t cur = 0; for (uint32_t i = 0; i < 20; ++i) { GroupOffsets[i] = cur; cur += GroupCounts[i]; }
+        uint32_t TempOffsets[20]; std::memcpy(TempOffsets, GroupOffsets, sizeof(GroupOffsets));
+        
         for (uint32_t i = 0; i < SourceCount; ++i)
         {
             uint32_t oid = SceneData->RenderQueue[i], mid = SceneData->MeshIDs[oid];
-            if (mid < MAX_MESH_TYPES) {
+            if (mid < 20) {
                 uint32_t sidx = TempOffsets[mid]++; SortedQueue[sidx] = oid;
                 const Math::FPacked3x4Matrix& mat = SceneData->WorldMatrices[oid];
                 FPerObjectConstants* dest = reinterpret_cast<FPerObjectConstants*>(DestStart + (sidx * AlignedConstantSize));
-                DirectX::XMStoreFloat4(&dest->Row0, mat.Row0); DirectX::XMStoreFloat4(&dest->Row1, mat.Row1);
-                DirectX::XMStoreFloat4(&dest->Row2, mat.Row2); dest->Padding = { 0, 0, 0, 1 };
+                DirectX::XMStoreFloat4(&dest->Row0, mat.Row0);
+                DirectX::XMStoreFloat4(&dest->Row1, mat.Row1);
+                DirectX::XMStoreFloat4(&dest->Row2, mat.Row2);
+                dest->Padding = { 0, 0, 0, 1 };
             }
         }
         Context->Unmap(PerObjectBuffer.Get(), 0);
         PerObjectRingBufferOffset += BulkSize;
 
+        // 카메라 행렬 업데이트
         float aspect = (ViewportHeight == 0) ? 1.0f : (float)ViewportWidth / (float)ViewportHeight;
         DirectX::XMVECTOR camPos = DirectX::XMLoadFloat3(&CameraState.Position);
         DirectX::XMVECTOR forward = DirectX::XMVector3Normalize(DirectX::XMVectorSet(std::cos(CameraState.PitchRadians) * std::cos(CameraState.YawRadians), std::cos(CameraState.PitchRadians) * std::sin(CameraState.YawRadians), std::sin(CameraState.PitchRadians), 0.0f));
-        DirectX::XMMATRIX view = DirectX::XMMatrixLookAtLH(camPos, DirectX::XMVectorAdd(camPos, forward), DirectX::XMVectorSet(0, 0, 1, 0));
+        DirectX::XMVECTOR up = DirectX::XMVectorSet(0, 0, 1, 0); // 씬 기준 UP
+        DirectX::XMMATRIX view = DirectX::XMMatrixLookAtLH(camPos, DirectX::XMVectorAdd(camPos, forward), up);
         DirectX::XMMATRIX proj = DirectX::XMMatrixPerspectiveFovLH(DirectX::XMConvertToRadians(CameraState.FOVDegrees), aspect, CameraState.NearClip, CameraState.FarClip);
         
+        // 빌보드가 카메라를 바라보게 할 Right, Up 벡터 계산
+        DirectX::XMVECTOR camRight = DirectX::XMVector3Normalize(DirectX::XMVector3Cross(up, forward));
+        DirectX::XMVECTOR camTrueUp = DirectX::XMVector3Normalize(DirectX::XMVector3Cross(forward, camRight));
+
         D3D11_MAPPED_SUBRESOURCE pfmap = {};
         if (SUCCEEDED(Context->Map(PerFrameBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &pfmap))) {
-            FPerFrameConstants pf = {}; DirectX::XMStoreFloat4x4(&pf.ViewProj, view * proj);
+            FPerFrameConstants pf = {}; 
+            DirectX::XMStoreFloat4x4(&pf.ViewProj, view * proj);
+            DirectX::XMStoreFloat4(&pf.CamRight, camRight);
+            DirectX::XMStoreFloat4(&pf.CamUp, camTrueUp);
             std::memcpy(pfmap.pData, &pf, sizeof(pf)); Context->Unmap(PerFrameBuffer.Get(), 0);
         }
 
         Context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-        Context->IASetInputLayout(InputLayout.Get());
-        Context->VSSetShader(VertexShader.Get(), nullptr, 0); Context->PSSetShader(PixelShader.Get(), nullptr, 0);
         Context->VSSetConstantBuffers(0, 1, PerFrameBuffer.GetAddressOf());
         Context->PSSetConstantBuffers(0, 1, PerFrameBuffer.GetAddressOf());
         Context->PSSetSamplers(0, 1, DiffuseSamplerState.GetAddressOf());
         Context->RSSetState(DefaultRasterizerState.Get()); Context->OMSetDepthStencilState(DefaultDepthStencilState.Get(), 0);
 
+        // --- 1. 메쉬 렌더링 (ID 0, 1) ---
+        Context->IASetInputLayout(InputLayout.Get());
+        Context->VSSetShader(VertexShader.Get(), nullptr, 0); Context->PSSetShader(PixelShader.Get(), nullptr, 0);
         for (uint32_t mid = 0; mid < MAX_MESH_TYPES; ++mid)
         {
-            if (MeshCounts[mid] == 0) continue;
+            if (GroupCounts[mid] == 0) continue;
             const FMeshResource& res = MeshResources[mid];
-            if (!res.VertexBuffer || !res.IndexBuffer) continue;
-
-            D3D11_MAPPED_SUBRESOURCE matmap = {};
-            if (SUCCEEDED(Context->Map(MaterialBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &matmap))) {
-                FMaterialConstants mc = { { 1, 1, 1, 1 } }; std::memcpy(matmap.pData, &mc, sizeof(mc));
-                Context->Unmap(MaterialBuffer.Get(), 0);
-            }
-            Context->PSSetConstantBuffers(2, 1, MaterialBuffer.GetAddressOf());
-            ID3D11ShaderResourceView* srv = res.DiffuseTextureView ? res.DiffuseTextureView.Get() : DefaultWhiteTextureView.Get();
+            ID3D11ShaderResourceView* srv = res.DiffuseTextureView.Get();
             Context->PSSetShaderResources(0, 1, &srv);
             UINT stride = sizeof(FMeshVertex), offset = 0;
             Context->IASetVertexBuffers(0, 1, res.VertexBuffer.GetAddressOf(), &stride, &offset);
             Context->IASetIndexBuffer(res.IndexBuffer.Get(), DXGI_FORMAT_R32_UINT, 0);
 
-            for (uint32_t i = MeshOffsets[mid]; i < MeshOffsets[mid] + MeshCounts[mid]; ++i) {
-                if (Context1) {
-                    UINT off = (BaseFrameOffset + (i * AlignedConstantSize)) / 16, cnt = AlignedConstantSize / 16;
-                    Context1->VSSetConstantBuffers1(1, 1, PerObjectBuffer.GetAddressOf(), &off, &cnt);
-                } else { Context->VSSetConstantBuffers(1, 1, PerObjectBuffer.GetAddressOf()); }
+            for (uint32_t i = GroupOffsets[mid]; i < GroupOffsets[mid] + GroupCounts[mid]; ++i) {
+                UINT off = (BaseFrameOffset + (i * AlignedConstantSize)) / 16, cnt = AlignedConstantSize / 16;
+                if (Context1) Context1->VSSetConstantBuffers1(1, 1, PerObjectBuffer.GetAddressOf(), &off, &cnt);
+                else Context->VSSetConstantBuffers(1, 1, PerObjectBuffer.GetAddressOf());
                 Context->DrawIndexed(res.IndexCount, 0, 0);
+            }
+        }
+
+        // --- 2. 빌보드 렌더링 (ID 10, 11) ---
+        Context->IASetInputLayout(BillboardLayout.Get());
+        Context->VSSetShader(BillboardVS.Get(), nullptr, 0); Context->PSSetShader(BillboardPS.Get(), nullptr, 0);
+        for (uint32_t mid = 0; mid < MAX_MESH_TYPES; ++mid)
+        {
+            uint32_t bid = mid + 10;
+            if (GroupCounts[bid] == 0 || !ImpostorResources[mid].bIsBaked) continue;
+            
+            ID3D11ShaderResourceView* srv = ImpostorResources[mid].SnapshotSRV.Get();
+            Context->PSSetShaderResources(0, 1, &srv);
+            UINT stride = sizeof(FBillboardVertex), offset = 0;
+            Context->IASetVertexBuffers(0, 1, BillboardVB.GetAddressOf(), &stride, &offset);
+            Context->IASetIndexBuffer(BillboardIB.Get(), DXGI_FORMAT_R32_UINT, 0);
+
+            for (uint32_t i = GroupOffsets[bid]; i < GroupOffsets[bid] + GroupCounts[bid]; ++i) {
+                UINT off = (BaseFrameOffset + (i * AlignedConstantSize)) / 16, cnt = AlignedConstantSize / 16;
+                if (Context1) Context1->VSSetConstantBuffers1(1, 1, PerObjectBuffer.GetAddressOf(), &off, &cnt);
+                else Context->VSSetConstantBuffers(1, 1, PerObjectBuffer.GetAddressOf());
+                Context->DrawIndexed(6, 0, 0);
             }
         }
     }

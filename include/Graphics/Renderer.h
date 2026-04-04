@@ -23,6 +23,19 @@ namespace Graphics
             DirectX::XMFLOAT2 TexCoord;
         };
 
+        struct FBillboardVertex
+        {
+            DirectX::XMFLOAT3 Position;
+            DirectX::XMFLOAT2 TexCoord;
+        };
+
+        struct FImpostorResource
+        {
+            ComPtr<ID3D11Texture2D> SnapshotTexture;
+            ComPtr<ID3D11ShaderResourceView> SnapshotSRV;
+            bool bIsBaked = false;
+        };
+
         struct FMeshResource
         {
             std::vector<FMeshVertex> SourceVertices;
@@ -74,15 +87,24 @@ namespace Graphics
         ComPtr<ID3D11SamplerState> DiffuseSamplerState;
         ComPtr<ID3D11ShaderResourceView> DefaultWhiteTextureView;
 
+        ComPtr<ID3D11VertexShader> BillboardVS;
+        ComPtr<ID3D11PixelShader> BillboardPS;
+        ComPtr<ID3D11InputLayout> BillboardLayout;
+        ComPtr<ID3D11Buffer> BillboardVB;
+        ComPtr<ID3D11Buffer> BillboardIB;
+
         ComPtr<ID3D11RasterizerState> DefaultRasterizerState;
         ComPtr<ID3D11DepthStencilState> DefaultDepthStencilState;
 
         std::array<FMeshResource, MAX_MESH_TYPES> MeshResources = {};
+        std::array<FImpostorResource, MAX_MESH_TYPES> ImpostorResources = {};
         uint32_t ViewportWidth = 0;
         uint32_t ViewportHeight = 0;
         uint32_t PerObjectRingBufferOffset = 0;
         FCameraState CameraState = {};
 
         FDebugRenderSettings DebugSettings;
+
+        void BakeImpostor(uint32_t MeshID);
     };
 }

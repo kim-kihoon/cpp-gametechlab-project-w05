@@ -73,8 +73,10 @@ namespace Scene
                 SceneData->MaxX[Index] = TX + 0.5f;
                 SceneData->MaxY[Index] = TY + 0.5f;
                 SceneData->MaxZ[Index] = TZ + 0.5f;
-                SceneData->MeshIDs[Index] = 0;
+                SceneData->MeshIDs[Index] = Index % 2;
+                SceneData->BaseMeshIDs[Index] = Index % 2;
                 SceneData->MaterialIDs[Index] = 0;
+
                 SceneData->IsVisible[Index] = true;
             }
 
