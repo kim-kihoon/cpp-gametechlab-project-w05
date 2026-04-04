@@ -1,4 +1,4 @@
-#include <Graphics/Renderer.h>
+﻿#include <Graphics/Renderer.h>
 #include <Core/PathManager.h>
 #include <Math/MathTypes.h>
 #include <Scene/SceneData.h>
@@ -357,18 +357,18 @@ namespace Graphics
         ViewportHeight = static_cast<uint32_t>(InHeight);
 
         DXGI_SWAP_CHAIN_DESC SwapChainDesc = {};
-        SwapChainDesc.BufferCount = 2;
+        SwapChainDesc.BufferCount = 3; // Triple Buffering
         SwapChainDesc.BufferDesc.Width = InWidth;
         SwapChainDesc.BufferDesc.Height = InHeight;
         SwapChainDesc.BufferDesc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
-        SwapChainDesc.BufferDesc.RefreshRate.Numerator = 165;
+        SwapChainDesc.BufferDesc.RefreshRate.Numerator = 0; // Uncapped
         SwapChainDesc.BufferDesc.RefreshRate.Denominator = 1;
         SwapChainDesc.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
         SwapChainDesc.OutputWindow = InWindowHandle;
         SwapChainDesc.SampleDesc.Count = 1;
         SwapChainDesc.SampleDesc.Quality = 0;
         SwapChainDesc.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
-        SwapChainDesc.Flags = DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH;
+        SwapChainDesc.Flags = DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH | DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING;
         SwapChainDesc.Windowed = TRUE;
 
         const D3D_FEATURE_LEVEL FeatureLevels[] = { D3D_FEATURE_LEVEL_11_0 };
@@ -508,7 +508,7 @@ namespace Graphics
         if (FAILED(Device->CreateBuffer(&PerFrameDesc, nullptr, &PerFrameBuffer))) return false;
 
         D3D11_BUFFER_DESC PerObjectDesc = {};
-        PerObjectDesc.ByteWidth = sizeof(FPerObjectConstants);
+        PerObjectDesc.ByteWidth = 16 * 1024 * 1024; // 16MB Large Buffer for Bulk Update
         PerObjectDesc.Usage = D3D11_USAGE_DYNAMIC;
         PerObjectDesc.BindFlags = D3D11_BIND_CONSTANT_BUFFER;
         PerObjectDesc.CPUAccessFlags = D3D11_CPU_ACCESS_WRITE;
@@ -530,6 +530,18 @@ namespace Graphics
         SamplerDesc.MinLOD = 0.0f;
         SamplerDesc.MaxLOD = D3D11_FLOAT32_MAX;
         if (FAILED(Device->CreateSamplerState(&SamplerDesc, &DiffuseSamplerState))) return false;
+
+        D3D11_RASTERIZER_DESC RasterizerDesc = {};
+        RasterizerDesc.FillMode = D3D11_FILL_SOLID;
+        RasterizerDesc.CullMode = D3D11_CULL_BACK;
+        RasterizerDesc.DepthClipEnable = TRUE;
+        if (FAILED(Device->CreateRasterizerState(&RasterizerDesc, &DefaultRasterizerState))) return false;
+
+        D3D11_DEPTH_STENCIL_DESC DepthDesc = {};
+        DepthDesc.DepthEnable = TRUE;
+        DepthDesc.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ALL;
+        DepthDesc.DepthFunc = D3D11_COMPARISON_LESS_EQUAL;
+        if (FAILED(Device->CreateDepthStencilState(&DepthDesc, &DefaultDepthStencilState))) return false;
 
         if (!CreateSolidTexture(Device.Get(), { 1.0f, 1.0f, 1.0f, 1.0f }, DefaultWhiteTextureView)) return false;
 
@@ -556,6 +568,8 @@ namespace Graphics
         Viewport.MinDepth = 0.0f;
         Viewport.MaxDepth = 1.0f;
         Context->RSSetViewports(1, &Viewport);
+
+        PerObjectRingBufferOffset = 0;
     }
 
     void URenderer::RenderScene(const Scene::USceneManager& InSceneManager)
@@ -566,21 +580,44 @@ namespace Graphics
         const uint32_t SourceCount = SceneData->RenderCount;
         if (SourceCount == 0) return;
 
-        thread_local std::array<std::vector<uint32_t>, MAX_MESH_TYPES> Buckets;
-        for (std::vector<uint32_t>& Bucket : Buckets)
-        {
-            Bucket.clear();
-            Bucket.reserve(SourceCount / MAX_MESH_TYPES + 1);
-        }
+        const uint32_t AlignedConstantSize = 256;
+        
+        // [전략] 벌크 업데이트: 5만 번의 Map을 단 1회로 단축
+        D3D11_MAPPED_SUBRESOURCE PerObjectMap = {};
+        if (FAILED(Context->Map(PerObjectBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &PerObjectMap))) return;
+        
+        uint8_t* DestStart = static_cast<uint8_t*>(PerObjectMap.pData);
+        
+        // 가시적 객체들의 데이터를 일괄 복사하고 오프셋 저장
+        thread_local std::vector<uint32_t> ObjectOffsets;
+        if (ObjectOffsets.size() < Scene::FSceneDataSOA::MAX_OBJECTS) ObjectOffsets.resize(Scene::FSceneDataSOA::MAX_OBJECTS);
 
-        for (uint32_t RenderIndex = 0; RenderIndex < SourceCount; ++RenderIndex)
+        thread_local std::array<std::vector<uint32_t>, MAX_MESH_TYPES> Buckets;
+        for (auto& Bucket : Buckets) { Bucket.clear(); Bucket.reserve(SourceCount / MAX_MESH_TYPES + 1); }
+
+        for (uint32_t i = 0; i < SourceCount; ++i)
         {
-            const uint32_t ObjectIndex = SceneData->RenderQueue[RenderIndex];
+            const uint32_t ObjectIndex = SceneData->RenderQueue[i];
             const uint32_t MeshID = SceneData->MeshIDs[ObjectIndex];
             if (MeshID >= MAX_MESH_TYPES) continue;
+            
             Buckets[MeshID].push_back(ObjectIndex);
-        }
 
+            // 데이터 일괄 기록 및 오프셋 계산
+            const uint32_t Offset = i * AlignedConstantSize;
+            ObjectOffsets[ObjectIndex] = Offset;
+
+            const Math::FPacked3x4Matrix& PackedMatrix = SceneData->WorldMatrices[ObjectIndex];
+            FPerObjectConstants* Dest = reinterpret_cast<FPerObjectConstants*>(DestStart + Offset);
+            
+            DirectX::XMStoreFloat4(&Dest->Row0, PackedMatrix.Row0);
+            DirectX::XMStoreFloat4(&Dest->Row1, PackedMatrix.Row1);
+            DirectX::XMStoreFloat4(&Dest->Row2, PackedMatrix.Row2);
+            Dest->Padding = { 0.0f, 0.0f, 0.0f, 1.0f };
+        }
+        Context->Unmap(PerObjectBuffer.Get(), 0);
+
+        // --- 여기서부터는 Map 호출 없이 순수 Draw만 수행하여 GPU Command Processor 부담 제거 ---
         const float AspectRatio = (ViewportHeight == 0) ? 1.0f : static_cast<float>(ViewportWidth) / static_cast<float>(ViewportHeight);
         const float CosPitch = std::cos(CameraState.PitchRadians);
         const float SinPitch = std::sin(CameraState.PitchRadians);
@@ -588,48 +625,22 @@ namespace Graphics
         const float SinYaw = std::sin(CameraState.YawRadians);
 
         DirectX::XMVECTOR CameraPosition = DirectX::XMLoadFloat3(&CameraState.Position);
-        DirectX::XMVECTOR Forward = DirectX::XMVector3Normalize(DirectX::XMVectorSet(
-            CosPitch * CosYaw,
-            CosPitch * SinYaw,
-            SinPitch,
-            0.0f));
+        DirectX::XMVECTOR Forward = DirectX::XMVector3Normalize(DirectX::XMVectorSet(CosPitch * CosYaw, CosPitch * SinYaw, SinPitch, 0.0f));
         DirectX::XMVECTOR WorldUp = DirectX::XMVectorSet(0.0f, 0.0f, 1.0f, 0.0f);
         DirectX::XMVECTOR CameraTarget = DirectX::XMVectorAdd(CameraPosition, Forward);
 
         const DirectX::XMMATRIX View = DirectX::XMMatrixLookAtLH(CameraPosition, CameraTarget, WorldUp);
-        const DirectX::XMMATRIX Projection = DirectX::XMMatrixPerspectiveFovLH(
-            DirectX::XMConvertToRadians(CameraState.FOVDegrees),
-            AspectRatio,
-            CameraState.NearClip,
-            CameraState.FarClip);
+        const DirectX::XMMATRIX Projection = DirectX::XMMatrixPerspectiveFovLH(DirectX::XMConvertToRadians(CameraState.FOVDegrees), AspectRatio, CameraState.NearClip, CameraState.FarClip);
         const DirectX::XMMATRIX ViewProj = View * Projection;
 
         D3D11_MAPPED_SUBRESOURCE PerFrameMap = {};
-        if (FAILED(Context->Map(PerFrameBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &PerFrameMap))) return;
-        FPerFrameConstants PerFrameConstants = {};
-        DirectX::XMStoreFloat4x4(&PerFrameConstants.ViewProj, ViewProj);
-        PerFrameConstants.LightDirection = { 0.4f, 0.5f, -1.0f, 0.0f };
-        std::memcpy(PerFrameMap.pData, &PerFrameConstants, sizeof(PerFrameConstants));
-        Context->Unmap(PerFrameBuffer.Get(), 0);
-
-        ComPtr<ID3D11RasterizerState> RasterizerState;
-        D3D11_RASTERIZER_DESC RasterizerDesc = {};
-        RasterizerDesc.FillMode = D3D11_FILL_SOLID;
-        RasterizerDesc.CullMode = D3D11_CULL_BACK;
-        RasterizerDesc.DepthClipEnable = TRUE;
-        if (SUCCEEDED(Device->CreateRasterizerState(&RasterizerDesc, &RasterizerState)))
+        if (SUCCEEDED(Context->Map(PerFrameBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &PerFrameMap)))
         {
-            Context->RSSetState(RasterizerState.Get());
-        }
-
-        ComPtr<ID3D11DepthStencilState> DepthState;
-        D3D11_DEPTH_STENCIL_DESC DepthDesc = {};
-        DepthDesc.DepthEnable = TRUE;
-        DepthDesc.DepthWriteMask = D3D11_DEPTH_WRITE_MASK_ALL;
-        DepthDesc.DepthFunc = D3D11_COMPARISON_LESS_EQUAL;
-        if (SUCCEEDED(Device->CreateDepthStencilState(&DepthDesc, &DepthState)))
-        {
-            Context->OMSetDepthStencilState(DepthState.Get(), 0);
+            FPerFrameConstants PerFrameConstants = {};
+            DirectX::XMStoreFloat4x4(&PerFrameConstants.ViewProj, ViewProj);
+            PerFrameConstants.LightDirection = { 0.4f, 0.5f, -1.0f, 0.0f };
+            std::memcpy(PerFrameMap.pData, &PerFrameConstants, sizeof(PerFrameConstants));
+            Context->Unmap(PerFrameBuffer.Get(), 0);
         }
 
         Context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
@@ -640,6 +651,9 @@ namespace Graphics
         Context->PSSetConstantBuffers(0, 1, PerFrameBuffer.GetAddressOf());
         Context->PSSetSamplers(0, 1, DiffuseSamplerState.GetAddressOf());
 
+        Context->RSSetState(DefaultRasterizerState.Get());
+        Context->OMSetDepthStencilState(DefaultDepthStencilState.Get(), 0);
+
         for (uint32_t MeshID = 0; MeshID < MAX_MESH_TYPES; ++MeshID)
         {
             const std::vector<uint32_t>& Objects = Buckets[MeshID];
@@ -647,37 +661,35 @@ namespace Graphics
             if (Objects.empty() || !MeshResource.VertexBuffer || !MeshResource.IndexBuffer || MeshResource.IndexCount == 0) continue;
 
             D3D11_MAPPED_SUBRESOURCE MaterialMap = {};
-            if (FAILED(Context->Map(MaterialBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &MaterialMap))) continue;
-            FMaterialConstants MaterialConstants = {};
-            MaterialConstants.BaseColor = { 1.0f, 1.0f, 1.0f, 1.0f };
-            std::memcpy(MaterialMap.pData, &MaterialConstants, sizeof(MaterialConstants));
-            Context->Unmap(MaterialBuffer.Get(), 0);
+            if (SUCCEEDED(Context->Map(MaterialBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &MaterialMap)))
+            {
+                FMaterialConstants MaterialConstants = { { 1.0f, 1.0f, 1.0f, 1.0f } };
+                std::memcpy(MaterialMap.pData, &MaterialConstants, sizeof(MaterialConstants));
+                Context->Unmap(MaterialBuffer.Get(), 0);
+            }
             Context->PSSetConstantBuffers(2, 1, MaterialBuffer.GetAddressOf());
 
             ID3D11ShaderResourceView* TextureView = MeshResource.DiffuseTextureView ? MeshResource.DiffuseTextureView.Get() : DefaultWhiteTextureView.Get();
             Context->PSSetShaderResources(0, 1, &TextureView);
 
-            UINT Stride = sizeof(FMeshVertex);
-            UINT Offset = 0;
+            UINT Stride = sizeof(FMeshVertex), Offset = 0;
             Context->IASetVertexBuffers(0, 1, MeshResource.VertexBuffer.GetAddressOf(), &Stride, &Offset);
             Context->IASetIndexBuffer(MeshResource.IndexBuffer.Get(), DXGI_FORMAT_R32_UINT, 0);
 
             for (uint32_t ObjectIndex : Objects)
             {
-                const Math::FPacked3x4Matrix& PackedMatrix = SceneData->WorldMatrices[ObjectIndex];
+                // [성능 핵심] 더 이상의 Map 호출 없음. VSSetConstantBuffers1 오프셋만 교체.
+                if (Context1)
+                {
+                    UINT OffsetInConstants = ObjectOffsets[ObjectIndex] / 16;
+                    UINT ConstantsCount = AlignedConstantSize / 16;
+                    Context1->VSSetConstantBuffers1(1, 1, PerObjectBuffer.GetAddressOf(), &OffsetInConstants, &ConstantsCount);
+                }
+                else
+                {
+                    Context->VSSetConstantBuffers(1, 1, PerObjectBuffer.GetAddressOf());
+                }
 
-                D3D11_MAPPED_SUBRESOURCE PerObjectMap = {};
-                if (FAILED(Context->Map(PerObjectBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &PerObjectMap))) continue;
-
-                FPerObjectConstants PerObjectConstants = {};
-                DirectX::XMStoreFloat4(&PerObjectConstants.Row0, PackedMatrix.Row0);
-                DirectX::XMStoreFloat4(&PerObjectConstants.Row1, PackedMatrix.Row1);
-                DirectX::XMStoreFloat4(&PerObjectConstants.Row2, PackedMatrix.Row2);
-                PerObjectConstants.Padding = { 0.0f, 0.0f, 0.0f, 1.0f };
-                std::memcpy(PerObjectMap.pData, &PerObjectConstants, sizeof(PerObjectConstants));
-                Context->Unmap(PerObjectBuffer.Get(), 0);
-
-                Context->VSSetConstantBuffers(1, 1, PerObjectBuffer.GetAddressOf());
                 Context->DrawIndexed(MeshResource.IndexCount, 0, 0);
             }
         }

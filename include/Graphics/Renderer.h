@@ -60,9 +60,13 @@ namespace Graphics
         ComPtr<ID3D11SamplerState> DiffuseSamplerState;
         ComPtr<ID3D11ShaderResourceView> DefaultWhiteTextureView;
 
+        ComPtr<ID3D11RasterizerState> DefaultRasterizerState;
+        ComPtr<ID3D11DepthStencilState> DefaultDepthStencilState;
+
         std::array<FMeshResource, MAX_MESH_TYPES> MeshResources = {};
         uint32_t ViewportWidth = 0;
         uint32_t ViewportHeight = 0;
+        uint32_t PerObjectRingBufferOffset = 0;
         FCameraState CameraState = {};
 
         FDebugRenderSettings DebugSettings;
