@@ -17,6 +17,7 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
+#include <thread>
 
 namespace Graphics
 {
@@ -263,6 +264,11 @@ namespace Graphics
 
             Microsoft::WRL::ComPtr<ID3D11Texture2D> Texture;
             if (FAILED(InDevice->CreateTexture2D(&TextureDesc, &InitialData, &Texture))) return false;
+
+            // CreateDefaultResources() 끝 또는 Initialize() 마지막
+            const uint32_t HWConcurrency = std::thread::hardware_concurrency();
+            const uint32_t NumWorkers = HWConcurrency > 1u ? HWConcurrency - 1u : 1u;
+
             return SUCCEEDED(InDevice->CreateShaderResourceView(Texture.Get(), nullptr, &OutTextureView));
         }
 
@@ -431,6 +437,13 @@ namespace Graphics
         if (FAILED(Device->CreateTexture2D(&DepthDesc, nullptr, &DepthBuffer))) return false;
         if (FAILED(Device->CreateDepthStencilView(DepthBuffer.Get(), nullptr, &DepthStencilView))) return false;
 
+        const uint32_t HWConcurrency = std::thread::hardware_concurrency();
+        const uint32_t NumWorkers = HWConcurrency > 1u ? HWConcurrency - 1u : 1u;
+        DeferredContexts.resize(NumWorkers);
+        CommandLists.resize(NumWorkers);
+        for (uint32_t w = 0; w < NumWorkers; ++w)
+            Device->CreateDeferredContext(0, &DeferredContexts[w]);
+
         return CreateDefaultResources();
     }
 
@@ -550,82 +563,189 @@ namespace Graphics
         const uint32_t SourceCount = SceneData->RenderCount;
         if (SourceCount == 0) return;
 
+        // ── 1. 정렬 ──────────────────────────────────────────────────────────
+        static uint32_t SortedQueue[Scene::FSceneDataSOA::MAX_OBJECTS];
+        uint32_t MeshCounts[MAX_MESH_TYPES] = {};
+        uint32_t MeshOffsets[MAX_MESH_TYPES] = {};
+
+        for (uint32_t i = 0; i < SourceCount; ++i)
+        {
+            uint32_t mid = SceneData->MeshIDs[SceneData->RenderQueue[i]];
+            if (mid < MAX_MESH_TYPES) MeshCounts[mid]++;
+        }
+        uint32_t cur = 0;
+        for (uint32_t i = 0; i < MAX_MESH_TYPES; ++i) { MeshOffsets[i] = cur; cur += MeshCounts[i]; }
+        uint32_t TempOffsets[MAX_MESH_TYPES];
+        std::memcpy(TempOffsets, MeshOffsets, sizeof(MeshOffsets));
+        for (uint32_t i = 0; i < SourceCount; ++i)
+        {
+            uint32_t oid = SceneData->RenderQueue[i];
+            uint32_t mid = SceneData->MeshIDs[oid];
+            if (mid < MAX_MESH_TYPES) SortedQueue[TempOffsets[mid]++] = oid;
+        }
+
+        // ── 2. 행렬 업로드 (Immediate Context, 메인 스레드) ──────────────────
         const uint32_t AlignedConstantSize = 256;
         const uint32_t BulkSize = SourceCount * AlignedConstantSize;
         const uint32_t BufferCapacity = 64 * 1024 * 1024;
 
         D3D11_MAP MapType = D3D11_MAP_WRITE_NO_OVERWRITE;
-        if (PerObjectRingBufferOffset + BulkSize > BufferCapacity) { MapType = D3D11_MAP_WRITE_DISCARD; PerObjectRingBufferOffset = 0; }
+        if (PerObjectRingBufferOffset + BulkSize > BufferCapacity)
+        {
+            MapType = D3D11_MAP_WRITE_DISCARD;
+            PerObjectRingBufferOffset = 0;
+        }
 
-        D3D11_MAPPED_SUBRESOURCE PerObjectMap = {};
-        if (FAILED(Context->Map(PerObjectBuffer.Get(), 0, MapType, 0, &PerObjectMap))) return;
-        uint8_t* DestStart = static_cast<uint8_t*>(PerObjectMap.pData) + PerObjectRingBufferOffset;
+        D3D11_MAPPED_SUBRESOURCE PerObjectMapped = {};
+        if (FAILED(Context->Map(PerObjectBuffer.Get(), 0, MapType, 0, &PerObjectMapped))) return;
+        uint8_t* DestStart = static_cast<uint8_t*>(PerObjectMapped.pData) + PerObjectRingBufferOffset;
         const uint32_t BaseFrameOffset = PerObjectRingBufferOffset;
 
-        static uint32_t SortedQueue[Scene::FSceneDataSOA::MAX_OBJECTS];
-        uint32_t MeshCounts[MAX_MESH_TYPES] = { 0 }, MeshOffsets[MAX_MESH_TYPES] = { 0 };
-        for (uint32_t i = 0; i < SourceCount; ++i) { uint32_t mid = SceneData->MeshIDs[SceneData->RenderQueue[i]]; if (mid < MAX_MESH_TYPES) MeshCounts[mid]++; }
-        uint32_t cur = 0; for (uint32_t i = 0; i < MAX_MESH_TYPES; ++i) { MeshOffsets[i] = cur; cur += MeshCounts[i]; }
-        uint32_t TempOffsets[MAX_MESH_TYPES]; std::memcpy(TempOffsets, MeshOffsets, sizeof(MeshOffsets));
         for (uint32_t i = 0; i < SourceCount; ++i)
         {
-            uint32_t oid = SceneData->RenderQueue[i], mid = SceneData->MeshIDs[oid];
-            if (mid < MAX_MESH_TYPES) {
-                uint32_t sidx = TempOffsets[mid]++; SortedQueue[sidx] = oid;
-                const Math::FPacked3x4Matrix& mat = SceneData->WorldMatrices[oid];
-                FPerObjectConstants* dest = reinterpret_cast<FPerObjectConstants*>(DestStart + (sidx * AlignedConstantSize));
-                DirectX::XMStoreFloat4(&dest->Row0, mat.Row0); DirectX::XMStoreFloat4(&dest->Row1, mat.Row1);
-                DirectX::XMStoreFloat4(&dest->Row2, mat.Row2); dest->Padding = { 0, 0, 0, 1 };
-            }
+            const uint32_t oid = SortedQueue[i];
+            const Math::FPacked3x4Matrix& mat = SceneData->WorldMatrices[oid];
+            FPerObjectConstants* dest = reinterpret_cast<FPerObjectConstants*>(DestStart + i * AlignedConstantSize);
+            DirectX::XMStoreFloat4(&dest->Row0, mat.Row0);
+            DirectX::XMStoreFloat4(&dest->Row1, mat.Row1);
+            DirectX::XMStoreFloat4(&dest->Row2, mat.Row2);
+            dest->Padding = { 0, 0, 0, 1 };
         }
+
         Context->Unmap(PerObjectBuffer.Get(), 0);
         PerObjectRingBufferOffset += BulkSize;
 
+        // ── 3. ViewProj 업로드 (Immediate Context, 메인 스레드) ──────────────
         float aspect = (ViewportHeight == 0) ? 1.0f : (float)ViewportWidth / (float)ViewportHeight;
         DirectX::XMVECTOR camPos = DirectX::XMLoadFloat3(&CameraState.Position);
-        DirectX::XMVECTOR forward = DirectX::XMVector3Normalize(DirectX::XMVectorSet(std::cos(CameraState.PitchRadians) * std::cos(CameraState.YawRadians), std::cos(CameraState.PitchRadians) * std::sin(CameraState.YawRadians), std::sin(CameraState.PitchRadians), 0.0f));
-        DirectX::XMMATRIX view = DirectX::XMMatrixLookAtLH(camPos, DirectX::XMVectorAdd(camPos, forward), DirectX::XMVectorSet(0, 0, 1, 0));
-        DirectX::XMMATRIX proj = DirectX::XMMatrixPerspectiveFovLH(DirectX::XMConvertToRadians(CameraState.FOVDegrees), aspect, CameraState.NearClip, CameraState.FarClip);
-        
+        DirectX::XMVECTOR forward = DirectX::XMVector3Normalize(
+            DirectX::XMVectorSet(
+                std::cos(CameraState.PitchRadians) * std::cos(CameraState.YawRadians),
+                std::cos(CameraState.PitchRadians) * std::sin(CameraState.YawRadians),
+                std::sin(CameraState.PitchRadians), 0.0f));
+        DirectX::XMMATRIX view = DirectX::XMMatrixLookAtLH(
+            camPos, DirectX::XMVectorAdd(camPos, forward), DirectX::XMVectorSet(0, 0, 1, 0));
+        DirectX::XMMATRIX proj = DirectX::XMMatrixPerspectiveFovLH(
+            DirectX::XMConvertToRadians(CameraState.FOVDegrees), aspect,
+            CameraState.NearClip, CameraState.FarClip);
+
         D3D11_MAPPED_SUBRESOURCE pfmap = {};
-        if (SUCCEEDED(Context->Map(PerFrameBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &pfmap))) {
-            FPerFrameConstants pf = {}; DirectX::XMStoreFloat4x4(&pf.ViewProj, view * proj);
-            std::memcpy(pfmap.pData, &pf, sizeof(pf)); Context->Unmap(PerFrameBuffer.Get(), 0);
+        if (SUCCEEDED(Context->Map(PerFrameBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &pfmap)))
+        {
+            FPerFrameConstants pf = {};
+            DirectX::XMStoreFloat4x4(&pf.ViewProj, DirectX::XMMatrixMultiply(view, proj));
+            std::memcpy(pfmap.pData, &pf, sizeof(pf));
+            Context->Unmap(PerFrameBuffer.Get(), 0);
         }
 
-        Context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-        Context->IASetInputLayout(InputLayout.Get());
-        Context->VSSetShader(VertexShader.Get(), nullptr, 0); Context->PSSetShader(PixelShader.Get(), nullptr, 0);
-        Context->VSSetConstantBuffers(0, 1, PerFrameBuffer.GetAddressOf());
-        Context->PSSetConstantBuffers(0, 1, PerFrameBuffer.GetAddressOf());
-        Context->PSSetSamplers(0, 1, DiffuseSamplerState.GetAddressOf());
-        Context->RSSetState(DefaultRasterizerState.Get()); Context->OMSetDepthStencilState(DefaultDepthStencilState.Get(), 0);
-
-        for (uint32_t mid = 0; mid < MAX_MESH_TYPES; ++mid)
+        // Material 업로드 (한 번만)
+        D3D11_MAPPED_SUBRESOURCE matmap = {};
+        if (SUCCEEDED(Context->Map(MaterialBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &matmap)))
         {
-            if (MeshCounts[mid] == 0) continue;
-            const FMeshResource& res = MeshResources[mid];
-            if (!res.VertexBuffer || !res.IndexBuffer) continue;
+            FMaterialConstants mc = { { 1, 1, 1, 1 } };
+            std::memcpy(matmap.pData, &mc, sizeof(mc));
+            Context->Unmap(MaterialBuffer.Get(), 0);
+        }
 
-            D3D11_MAPPED_SUBRESOURCE matmap = {};
-            if (SUCCEEDED(Context->Map(MaterialBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &matmap))) {
-                FMaterialConstants mc = { { 1, 1, 1, 1 } }; std::memcpy(matmap.pData, &mc, sizeof(mc));
-                Context->Unmap(MaterialBuffer.Get(), 0);
-            }
-            Context->PSSetConstantBuffers(2, 1, MaterialBuffer.GetAddressOf());
-            ID3D11ShaderResourceView* srv = res.DiffuseTextureView ? res.DiffuseTextureView.Get() : DefaultWhiteTextureView.Get();
-            Context->PSSetShaderResources(0, 1, &srv);
-            UINT stride = sizeof(FMeshVertex), offset = 0;
-            Context->IASetVertexBuffers(0, 1, res.VertexBuffer.GetAddressOf(), &stride, &offset);
-            Context->IASetIndexBuffer(res.IndexBuffer.Get(), DXGI_FORMAT_R32_UINT, 0);
+        // ── 4. Deferred Context 준비 ─────────────────────────────────────────
+        const uint32_t HWConcurrency = std::thread::hardware_concurrency();
+        const uint32_t NumWorkers = HWConcurrency > 1u ? HWConcurrency - 1u : 1u;
 
-            for (uint32_t i = MeshOffsets[mid]; i < MeshOffsets[mid] + MeshCounts[mid]; ++i) {
-                if (Context1) {
-                    UINT off = (BaseFrameOffset + (i * AlignedConstantSize)) / 16, cnt = AlignedConstantSize / 16;
-                    Context1->VSSetConstantBuffers1(1, 1, PerObjectBuffer.GetAddressOf(), &off, &cnt);
-                } else { Context->VSSetConstantBuffers(1, 1, PerObjectBuffer.GetAddressOf()); }
-                Context->DrawIndexed(res.IndexCount, 0, 0);
-            }
+        if (DeferredContexts.size() < NumWorkers)
+        {
+            size_t prev = DeferredContexts.size();
+            DeferredContexts.resize(NumWorkers);
+            CommandLists.resize(NumWorkers);
+            for (size_t w = prev; w < NumWorkers; ++w)
+                Device->CreateDeferredContext(0, &DeferredContexts[w]);
+        }
+
+        for (uint32_t w = 0; w < NumWorkers; ++w)
+            CommandLists[w].Reset();
+
+        // ── 5. 메시 타입을 워커에 분배 ───────────────────────────────────────
+        // 실제로 오브젝트가 있는 메시 타입만 추려서 분배
+        uint32_t ActiveMeshTypes[MAX_MESH_TYPES];
+        uint32_t ActiveCount = 0;
+        for (uint32_t mid = 0; mid < MAX_MESH_TYPES; ++mid)
+            if (MeshCounts[mid] > 0) ActiveMeshTypes[ActiveCount++] = mid;
+
+        // 워커별 담당 메시 타입 범위 [begin, end)
+        // ActiveCount가 NumWorkers보다 작을 수 있으므로 실제 워커 수 조정
+        const uint32_t ActualWorkers = ActiveCount < NumWorkers ? ActiveCount : NumWorkers;
+
+        // ── 6. 워커 함수 ─────────────────────────────────────────────────────
+        auto WorkerFunc = [&](uint32_t WorkerIdx)
+            {
+                ID3D11DeviceContext* DC = DeferredContexts[WorkerIdx].Get();
+
+                // Deferred Context는 상태를 상속하지 않으므로 전부 세팅
+                DC->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+                DC->IASetInputLayout(InputLayout.Get());
+                DC->VSSetShader(VertexShader.Get(), nullptr, 0);
+                DC->PSSetShader(PixelShader.Get(), nullptr, 0);
+                DC->VSSetConstantBuffers(0, 1, PerFrameBuffer.GetAddressOf());
+                DC->PSSetConstantBuffers(0, 1, PerFrameBuffer.GetAddressOf());
+                DC->PSSetConstantBuffers(2, 1, MaterialBuffer.GetAddressOf());
+                DC->PSSetSamplers(0, 1, DiffuseSamplerState.GetAddressOf());
+                DC->RSSetState(DefaultRasterizerState.Get());
+                DC->OMSetDepthStencilState(DefaultDepthStencilState.Get(), 0);
+                DC->OMSetRenderTargets(1, MainRenderTargetView.GetAddressOf(), DepthStencilView.Get());
+                D3D11_VIEWPORT vp = { 0.f, 0.f, (float)ViewportWidth, (float)ViewportHeight, 0.f, 1.f };
+                DC->RSSetViewports(1, &vp);
+
+                // DC1 QI — 루프 밖에서 한 번만
+                Microsoft::WRL::ComPtr<ID3D11DeviceContext1> DC1;
+                DC->QueryInterface(IID_PPV_ARGS(&DC1));
+
+                // 이 워커가 담당할 ActiveMeshTypes 범위 계산
+                // 균등 분배: i % ActualWorkers == WorkerIdx 인 것만 처리
+                for (uint32_t ai = WorkerIdx; ai < ActiveCount; ai += ActualWorkers)
+                {
+                    const uint32_t mid = ActiveMeshTypes[ai];
+                    const FMeshResource& res = MeshResources[mid];
+                    if (!res.VertexBuffer || !res.IndexBuffer || res.IndexCount == 0) continue;
+
+                    ID3D11ShaderResourceView* srv = res.DiffuseTextureView
+                        ? res.DiffuseTextureView.Get()
+                        : DefaultWhiteTextureView.Get();
+                    DC->PSSetShaderResources(0, 1, &srv);
+
+                    UINT stride = sizeof(FMeshVertex), vbOffset = 0;
+                    DC->IASetVertexBuffers(0, 1, res.VertexBuffer.GetAddressOf(), &stride, &vbOffset);
+                    DC->IASetIndexBuffer(res.IndexBuffer.Get(), DXGI_FORMAT_R32_UINT, 0);
+
+                    for (uint32_t i = MeshOffsets[mid]; i < MeshOffsets[mid] + MeshCounts[mid]; ++i)
+                    {
+                        if (DC1)
+                        {
+                            UINT off = (BaseFrameOffset + i * AlignedConstantSize) / 16u;
+                            UINT cnt = AlignedConstantSize / 16u;
+                            ID3D11Buffer* pBuf = PerObjectBuffer.Get();
+                            DC1->VSSetConstantBuffers1(1, 1, &pBuf, &off, &cnt);
+                        }
+                        DC->DrawIndexed(res.IndexCount, 0, 0);
+                    }
+                }
+
+                DC->FinishCommandList(FALSE, &CommandLists[WorkerIdx]);
+            };
+
+        // ── 7. 스레드 시작 & 대기 ────────────────────────────────────────────
+        std::vector<std::thread> Workers;
+        Workers.reserve(ActualWorkers);
+        for (uint32_t w = 0; w < ActualWorkers; ++w)
+            Workers.emplace_back(WorkerFunc, w);
+        for (auto& t : Workers) t.join();
+
+        // ── 8. ExecuteCommandList ─────────────────────────────────────────────
+        // RestoreContextState = FALSE: Immediate Context 상태 리셋됨
+        // BeginFrame에서 세팅한 RTV/Clear는 이미 GPU 큐에 들어갔으므로 문제없음
+        // Execute 이후 Immediate Context로 추가 드로우가 없으므로 복구 불필요
+        for (uint32_t w = 0; w < ActualWorkers; ++w)
+        {
+            if (CommandLists[w])
+                Context->ExecuteCommandList(CommandLists[w].Get(), FALSE);
         }
     }
 

@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include <Graphics/RendererTypes.h>
 #include <DirectXMath.h>
 #include <array>
@@ -84,5 +84,8 @@ namespace Graphics
         FCameraState CameraState = {};
 
         FDebugRenderSettings DebugSettings;
+
+        std::vector<Microsoft::WRL::ComPtr<ID3D11DeviceContext>> DeferredContexts;
+        std::vector<Microsoft::WRL::ComPtr<ID3D11CommandList>>   CommandLists;
     };
 }
