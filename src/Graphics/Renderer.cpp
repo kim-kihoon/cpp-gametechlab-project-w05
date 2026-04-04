@@ -119,7 +119,9 @@ namespace Graphics
             struct VI{float3 P:POSITION;float3 N:NORMAL;float2 T:TEXCOORD0;};
             struct PI{float4 P:SV_POSITION;float2 T:TEXCOORD0;};
             PI VSMain(VI i){PI o;float4 lp=float4(i.P,1.0f);float3 wp=float3(dot(lp,R0),dot(lp,R1),dot(lp,R2));o.P=mul(float4(wp,1.0f),VP);o.T=i.T;return o;}
-            float4 PSMain(PI i) : SV_TARGET { float4 c = DT.Sample(SS, i.T); return float4(c.rgb, 1.0f); }
+            float4 PSMain(PI i) : SV_TARGET { 
+                return DT.Sample(SS, i.T) * BC; 
+            }
         )";
         ComPtr<ID3DBlob> VS, PS, Err;
         D3DCompile(ShaderSrc, strlen(ShaderSrc), nullptr, nullptr, nullptr, "VSMain", "vs_5_0", 0, 0, &VS, &Err);
@@ -150,11 +152,38 @@ namespace Graphics
             struct VI{float3 P:POSITION;float2 T:TEXCOORD0;};
             struct PI{float4 P:SV_POSITION;float2 T:TEXCOORD0;};
             PI VSMain(VI i){PI o;float3 wp=float3(R0.w,R1.w,R2.w)+PD.xyz;float sx=length(float3(R0.x,R1.x,R2.x)),sy=length(float3(R0.y,R1.y,R2.y));float3 fp=wp+(i.P.x*sx*2.5f*CR.xyz)+(i.P.z*sy*2.5f*CU.xyz);o.P=mul(float4(fp,1.0f),VP);o.T=i.T;return o;}
-            float4 PSMain(PI i):SV_TARGET{float3 wp=float3(R0.w,R1.w,R2.w);float3 of=normalize(float3(R0.x,R1.x,R2.x)),orgt=normalize(float3(R0.y,R1.y,R2.y));float3 vd=normalize(CP.xyz-wp);vd.z=0;vd=normalize(vd); float ang=atan2(dot(vd,orgt),dot(vd,of));if(ang<0.0f)ang+=6.2831853f;int f=(int)round(ang/1.570796f)%4;
-float4 c = SN.Sample(SS,(i.T*0.5f)+float2(f%2,f/2)*0.5f);
-if (c.a < 0.1f) discard;
-return c;
-}
+            
+            float4 PSMain(PI i) : SV_TARGET {
+                float3 wp = float3(R0.w, R1.w, R2.w);
+                
+                // 1. 사과의 3D 회전축 추출
+                float3 X = normalize(float3(R0.x, R1.x, R2.x));
+                float3 Y = normalize(float3(R0.y, R1.y, R2.y));
+                float3 Z = normalize(float3(R0.z, R1.z, R2.z));
+                
+                // 2. 카메라 방향 벡터
+                float3 V = normalize(CP.xyz - wp);
+                
+                // 3. 6개 면과의 내적 계산
+                float d_pX = dot(V, X); float d_mX = -d_pX;
+                float d_pY = dot(V, Y); float d_mY = -d_pY;
+                float d_pZ = dot(V, Z); float d_mZ = -d_pZ;
+                
+                // 4. 가장 카메라를 정면으로 바라보는 면 찾기 (사진관과 1:1 완벽 매칭!)
+                int f = 0; float maxDot = d_pX;             // Frame 0 (+X면)
+                if(d_mY > maxDot) { maxDot = d_mY; f = 1; } // Frame 1 (-Y면)
+                if(d_mX > maxDot) { maxDot = d_mX; f = 2; } // Frame 2 (-X면)
+                if(d_pY > maxDot) { maxDot = d_pY; f = 3; } // Frame 3 (+Y면)
+                if(d_pZ > maxDot) { maxDot = d_pZ; f = 4; } // Frame 4 (+Z면, 윗면)
+                if(d_mZ > maxDot) { maxDot = d_mZ; f = 5; } // Frame 5 (-Z면, 아랫면)
+                
+                // 5. 1024x512 아틀라스(4x2) UV 맵핑
+                float2 uv = (i.T * float2(0.25f, 0.5f)) + float2(f % 4, f / 4) * float2(0.25f, 0.5f);
+                float4 c = SN.Sample(SS, uv);
+                if (c.a < 0.1f) discard;
+                
+                return c;
+            }
         )";
         D3DCompile(BBShader, strlen(BBShader), nullptr, nullptr, nullptr, "VSMain", "vs_5_0", 0, 0, &VS, &Err);
         D3DCompile(BBShader, strlen(BBShader), nullptr, nullptr, nullptr, "PSMain", "ps_5_0", 0, 0, &PS, &Err);
@@ -173,11 +202,11 @@ return c;
 
     void URenderer::BakeImpostor(uint32_t MeshID) {
         const FMeshResource& res = MeshResources[MeshID]; if (res.SourceVertices.empty()) return;
-        D3D11_TEXTURE2D_DESC td = { 512, 512, 1, 1, DXGI_FORMAT_R8G8B8A8_UNORM, {1, 0}, D3D11_USAGE_DEFAULT, D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE, 0, 0 };
+        D3D11_TEXTURE2D_DESC td = { 1024, 512, 1, 1, DXGI_FORMAT_R8G8B8A8_UNORM, {1, 0}, D3D11_USAGE_DEFAULT, D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE, 0, 0 };
         ComPtr<ID3D11Texture2D> tex; Device->CreateTexture2D(&td, nullptr, &tex);
         ComPtr<ID3D11RenderTargetView> rtv; Device->CreateRenderTargetView(tex.Get(), nullptr, &rtv);
         ComPtr<ID3D11ShaderResourceView> srv; Device->CreateShaderResourceView(tex.Get(), nullptr, &srv);
-        D3D11_TEXTURE2D_DESC dd = { 512, 512, 1, 1, DXGI_FORMAT_D24_UNORM_S8_UINT, {1, 0}, D3D11_USAGE_DEFAULT, D3D11_BIND_DEPTH_STENCIL, 0, 0 };
+        D3D11_TEXTURE2D_DESC dd = { 1024, 512, 1, 1, DXGI_FORMAT_D24_UNORM_S8_UINT, {1, 0}, D3D11_USAGE_DEFAULT, D3D11_BIND_DEPTH_STENCIL, 0, 0 };
         ComPtr<ID3D11Texture2D> dtx; Device->CreateTexture2D(&dd, nullptr, &dtx);
         ComPtr<ID3D11DepthStencilView> dsv; Device->CreateDepthStencilView(dtx.Get(), nullptr, &dsv);
         DirectX::XMMATRIX view = DirectX::XMMatrixLookAtLH({ 3, 0, 0 }, { 0, 0, 0 }, { 0, 0, 1 });
@@ -193,14 +222,38 @@ return c;
         Context->VSSetConstantBuffers(0, 1, BakePerFrameBuffer.GetAddressOf()); Context->PSSetConstantBuffers(2, 1, MaterialBuffer.GetAddressOf()); Context->PSSetSamplers(0, 1, DiffuseSamplerState.GetAddressOf());
         ID3D11ShaderResourceView* dsrv = res.DiffuseTextureView.Get(); Context->PSSetShaderResources(0, 1, &dsrv);
         UINT s = sizeof(FMeshVertex), o = 0; Context->IASetVertexBuffers(0, 1, res.VertexBuffer.GetAddressOf(), &s, &o); Context->IASetIndexBuffer(res.IndexBuffer.Get(), DXGI_FORMAT_R32_UINT, 0);
-        for (int f = 0; f < 4; ++f) {
-            D3D11_VIEWPORT vp = { (float)((f % 2) * 256), (float)((f / 2) * 256), 256, 256, 0, 1 }; Context->RSSetViewports(1, &vp);
-            if (SUCCEEDED(Context->Map(BakePerObjectBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &m))) {
-                FPerObjectConstants po = {}; DirectX::XMMATRIX sm = DirectX::XMMatrixTranspose(DirectX::XMMatrixTranslation(-res.LocalCenter.x, -res.LocalCenter.y, -res.LocalCenter.z) * DirectX::XMMatrixRotationZ(-f * DirectX::XM_PIDIV2));
-                DirectX::XMStoreFloat4(&po.R0, sm.r[0]); DirectX::XMStoreFloat4(&po.R1, sm.r[1]); DirectX::XMStoreFloat4(&po.R2, sm.r[2]); po.PD = { 0,0,0,1 };
-                memcpy(m.pData, &po, sizeof(po)); Context->Unmap(BakePerObjectBuffer.Get(), 0);
+        for (int f = 0; f < 6; ++f)
+        {
+            // 4x2 아틀라스 레이아웃에 맞게 뷰포트 이동 (0~3은 윗줄, 4~5는 아랫줄)
+            D3D11_VIEWPORT vp = { (float)((f % 4) * 256), (float)((f / 4) * 256), 256.0f, 256.0f, 0, 1 };
+            Context->RSSetViewports(1, &vp);
+
+            D3D11_MAPPED_SUBRESOURCE m;
+            if (SUCCEEDED(Context->Map(BakePerObjectBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &m)))
+            {
+                DirectX::XMMATRIX rotMat;
+                if (f == 0)      rotMat = DirectX::XMMatrixIdentity();                             // Frame 0: +X면 (기본)
+                else if (f == 1) rotMat = DirectX::XMMatrixRotationZ(DirectX::XM_PIDIV2);          // Frame 1: -Y면 (Z축 +90도)
+                else if (f == 2) rotMat = DirectX::XMMatrixRotationZ(DirectX::XM_PI);              // Frame 2: -X면 (Z축 180도)
+                else if (f == 3) rotMat = DirectX::XMMatrixRotationZ(-DirectX::XM_PIDIV2);         // Frame 3: +Y면 (Z축 -90도)
+                else if (f == 4) rotMat = DirectX::XMMatrixRotationY(DirectX::XM_PIDIV2);          // Frame 4: +Z면 (윗면, Y축 +90도)
+                else             rotMat = DirectX::XMMatrixRotationY(-DirectX::XM_PIDIV2);         // Frame 5: -Z면 (아랫면, Y축 -90도)
+
+                DirectX::XMMATRIX objMat = DirectX::XMMatrixTranslation(-res.LocalCenter.x, -res.LocalCenter.y, -res.LocalCenter.z) * rotMat;
+
+                FPerObjectConstants po = {};
+                DirectX::XMMATRIX sm = DirectX::XMMatrixTranspose(objMat);
+                DirectX::XMStoreFloat4(&po.R0, sm.r[0]);
+                DirectX::XMStoreFloat4(&po.R1, sm.r[1]);
+                DirectX::XMStoreFloat4(&po.R2, sm.r[2]);
+                po.PD = { 0, 0, 0, 1 };
+
+                std::memcpy(m.pData, &po, sizeof(po));
+                Context->Unmap(BakePerObjectBuffer.Get(), 0);
             }
-            Context->VSSetConstantBuffers(1, 1, BakePerObjectBuffer.GetAddressOf()); Context->DrawIndexed(res.IndexCount, 0, 0);
+
+            Context->VSSetConstantBuffers(1, 1, BakePerObjectBuffer.GetAddressOf());
+            Context->DrawIndexed(res.IndexCount, 0, 0);
         }
         ImpostorResources[MeshID].SnapshotTexture = tex; ImpostorResources[MeshID].SnapshotSRV = srv; ImpostorResources[MeshID].bIsBaked = true;
         ID3D11RenderTargetView* nrt = nullptr; Context->OMSetRenderTargets(1, &nrt, nullptr);
