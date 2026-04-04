@@ -111,8 +111,6 @@ namespace Scene
                     // 박스에 맞았다면!
                     if (tNear <= tFar && tFar > 0.0f && tNear < ClosestHitInCell)
                     {
-                        // --- 2. 정밀 검사 (Narrow Phase) ---
-                        // 템플릿으로 전달되었기 때문에 여기서 컴파일러가 App.cpp의 람다 코드를 통째로 복사해서 붙여넣습니다. (간접 호출 X)
                         float PreciseDistance = ClosestHitInCell;
                         if (NarrowPhaseTest(Idx, PreciseDistance) && PreciseDistance < ClosestHitInCell)
                         {

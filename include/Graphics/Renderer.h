@@ -39,6 +39,7 @@ namespace Graphics
         ~URenderer();
 
         bool Initialize(HWND InWindowHandle, int InWidth, int InHeight);
+        void Resize(int Width, int Height);
         void BeginFrame();
         void EndFrame();
         void RenderScene(const Scene::USceneManager& InSceneManager);

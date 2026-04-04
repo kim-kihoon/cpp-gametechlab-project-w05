@@ -315,20 +315,16 @@ void UApp::Picking()
 {
     if (bPendingPick && SceneManager && SceneManager->GetGrid())
     {
-        // 1. 화면 클릭 좌표를 기반으로 World 공간의 Ray 생성
         Math::FRay WorldRay = CalculatePickingRay(CameraState, PickPosition.x, PickPosition.y, ScreenWidth, ScreenHeight);
 
-        // 2. 정밀 검사(Narrow Phase)를 수행할 람다 함수 정의
         auto PreciseTriangleTest = [&](uint32_t ObjIndex, float& OutHitDistance) -> bool
             {
                 const Scene::FSceneDataSOA* SceneData = SceneManager->GetSceneData();
                 uint32_t MeshID = SceneData->MeshIDs[ObjIndex];
 
-                // 렌더러에서 해당 객체의 Mesh(정점/인덱스) 데이터 가져오기
                 const auto* MeshRes = Renderer->GetMeshResource(MeshID);
                 if (!MeshRes || MeshRes->SourceIndices.empty()) return false;
 
-                // --- Ray를 객체의 Local 공간으로 변환 (역행렬 사용) ---
                 const auto& PMat = SceneData->WorldMatrices[ObjIndex];
                 DirectX::XMMATRIX WorldMat = DirectX::XMMatrixSet(
                     DirectX::XMVectorGetX(PMat.Row0), DirectX::XMVectorGetY(PMat.Row0), DirectX::XMVectorGetZ(PMat.Row0), 0.0f,
@@ -341,12 +337,11 @@ void UApp::Picking()
 
                 DirectX::XMVECTOR LocalOrigin = DirectX::XMVector3TransformCoord(DirectX::XMLoadFloat3(&WorldRay.Origin), InvWorld);
                 DirectX::XMVECTOR LocalDir = DirectX::XMVector3TransformNormal(DirectX::XMLoadFloat3(&WorldRay.Direction), InvWorld);
-                LocalDir = DirectX::XMVector3Normalize(LocalDir); // 정규화 필수
+                LocalDir = DirectX::XMVector3Normalize(LocalDir);
 
                 bool bHit = false;
-                float ClosestWorldT = OutHitDistance; // 현재 AABB까지의 거리
+                float ClosestWorldT = OutHitDistance;
 
-                // --- Ray-Triangle 교차 검사 (Möller–Trumbore 알고리즘) ---
                 for (size_t i = 0; i < MeshRes->SourceIndices.size(); i += 3)
                 {
                     uint32_t i0 = MeshRes->SourceIndices[i];
@@ -362,7 +357,7 @@ void UApp::Picking()
                     DirectX::XMVECTOR H = DirectX::XMVector3Cross(LocalDir, Edge2);
 
                     float A = DirectX::XMVectorGetX(DirectX::XMVector3Dot(Edge1, H));
-                    if (A > -0.00001f && A < 0.00001f) continue; // Ray가 삼각형과 평행함
+                    if (A > -0.00001f && A < 0.00001f) continue;
 
                     float F = 1.0f / A;
                     DirectX::XMVECTOR S = DirectX::XMVectorSubtract(LocalOrigin, V0);
@@ -375,18 +370,14 @@ void UApp::Picking()
 
                     float LocalT = F * DirectX::XMVectorGetX(DirectX::XMVector3Dot(Edge2, Q));
 
-                    // 삼각형과 교차함!
                     if (LocalT > 0.00001f)
                     {
-                        // 로컬 공간에서 부딪힌 점을 찾아 다시 월드 공간으로 변환 (스케일 오차 보정)
                         DirectX::XMVECTOR LocalIntersection = DirectX::XMVectorAdd(LocalOrigin, DirectX::XMVectorScale(LocalDir, LocalT));
                         DirectX::XMVECTOR WorldIntersection = DirectX::XMVector3TransformCoord(LocalIntersection, WorldMat);
 
-                        // 실제 월드 공간 기준의 거리를 계산
                         DirectX::XMVECTOR DistVec = DirectX::XMVectorSubtract(WorldIntersection, DirectX::XMLoadFloat3(&WorldRay.Origin));
                         float WorldT = DirectX::XMVectorGetX(DirectX::XMVector3Length(DistVec));
 
-                        // 지금까지 찾은 것 중 가장 가깝다면 갱신
                         if (WorldT < ClosestWorldT)
                         {
                             ClosestWorldT = WorldT;
@@ -399,11 +390,9 @@ void UApp::Picking()
                 return bHit;
             };
 
-        // 3. Grid에 Ray와 람다 함수(정밀 검사)를 함께 넘겨줍니다.
         uint32_t HitIndex = 0;
-        float HitDistance = 1000.0f; // 최대 거리 설정
+        float HitDistance = 1000.0f; 
 
-        // 템플릿 처리된 Raycast 호출!
         if (SceneManager->GetGrid()->Raycast(WorldRay, 1000.0f, HitIndex, HitDistance, PreciseTriangleTest))
         {
             SceneManager->SelectObject(HitIndex);
@@ -495,6 +484,17 @@ LRESULT CALLBACK UApp::WindowProc(HWND hWnd, UINT Message, WPARAM wParam, LPARAM
 
     switch (Message)
     {
+    case WM_SIZE:
+        if (AppInstance != nullptr && wParam != SIZE_MINIMIZED)
+        {
+            AppInstance->ScreenWidth = LOWORD(lParam);
+            AppInstance->ScreenHeight = HIWORD(lParam);
+            if (AppInstance->Renderer)
+            {
+                AppInstance->Renderer->Resize(AppInstance->ScreenWidth, AppInstance->ScreenHeight);
+            }
+        }
+        return 0;
     case WM_RBUTTONDOWN:
         if (AppInstance != nullptr)
         {

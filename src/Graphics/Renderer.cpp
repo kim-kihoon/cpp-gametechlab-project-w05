@@ -434,6 +434,45 @@ namespace Graphics
         return CreateDefaultResources();
     }
 
+    void URenderer::Resize(int Width, int Height)
+    {
+        if (Width == 0 || Height == 0 || !SwapChain) return;
+
+        ViewportWidth = static_cast<uint32_t>(Width);
+        ViewportHeight = static_cast<uint32_t>(Height);
+
+        Context->OMSetRenderTargets(0, nullptr, nullptr);
+        MainRenderTargetView.Reset();
+        DepthStencilView.Reset();
+
+        if (FAILED(SwapChain->ResizeBuffers(0, ViewportWidth, ViewportHeight, DXGI_FORMAT_UNKNOWN, DXGI_SWAP_CHAIN_FLAG_ALLOW_MODE_SWITCH | DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING)))
+        {
+            return;
+        }
+
+        ComPtr<ID3D11Texture2D> BackBuffer;
+        if (SUCCEEDED(SwapChain->GetBuffer(0, IID_PPV_ARGS(&BackBuffer))))
+        {
+            Device->CreateRenderTargetView(BackBuffer.Get(), nullptr, &MainRenderTargetView);
+        }
+
+        D3D11_TEXTURE2D_DESC DepthDesc = {};
+        DepthDesc.Width = ViewportWidth;
+        DepthDesc.Height = ViewportHeight;
+        DepthDesc.MipLevels = 1;
+        DepthDesc.ArraySize = 1;
+        DepthDesc.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
+        DepthDesc.SampleDesc.Count = 1;
+        DepthDesc.Usage = D3D11_USAGE_DEFAULT;
+        DepthDesc.BindFlags = D3D11_BIND_DEPTH_STENCIL;
+
+        ComPtr<ID3D11Texture2D> DepthBuffer;
+        if (SUCCEEDED(Device->CreateTexture2D(&DepthDesc, nullptr, &DepthBuffer)))
+        {
+            Device->CreateDepthStencilView(DepthBuffer.Get(), nullptr, &DepthStencilView);
+        }
+    }
+
     const URenderer::FMeshResource* URenderer::GetMeshResource(uint32_t MeshID) const
     {
         if (MeshID < MAX_MESH_TYPES) return &MeshResources[MeshID];
