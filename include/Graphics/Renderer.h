@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include <Graphics/RendererTypes.h>
 #include <DirectXMath.h>
 #include <array>
@@ -51,6 +51,8 @@ namespace Graphics
         ID3D11Device* GetDevice() { return Device.Get(); }
         ID3D11DeviceContext* GetContext() { return Context.Get(); }
         ID3D11DeviceContext1* GetContext1() { return Context1.Get(); }
+
+        const FMeshResource* GetMeshResource(uint32_t MeshID) const;
 
     private:
         bool CreateDefaultResources();

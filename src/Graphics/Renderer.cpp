@@ -434,6 +434,12 @@ namespace Graphics
         return CreateDefaultResources();
     }
 
+    const URenderer::FMeshResource* URenderer::GetMeshResource(uint32_t MeshID) const
+    {
+        if (MeshID < MAX_MESH_TYPES) return &MeshResources[MeshID];
+        return nullptr;
+    }
+
     bool URenderer::CreateDefaultResources()
     {
         const char* ShaderSrc = R"(

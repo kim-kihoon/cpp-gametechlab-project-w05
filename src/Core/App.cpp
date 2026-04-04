@@ -197,12 +197,18 @@ bool UApp::Initialize(HINSTANCE InHInstance, int InCmdShow)
     WNDCLASSEXW WindowClass = { sizeof(WNDCLASSEXW), CS_CLASSDC, UApp::WindowProc, 0L, 0L, InstanceHandle, nullptr, nullptr, nullptr, nullptr, L"VerstappenEngineClass", nullptr };
     ::RegisterClassExW(&WindowClass);
 
-    DWORD WindowStyle;
+    DWORD WindowStyle = WS_OVERLAPPEDWINDOW;
     ScreenWidth = 1920;
     ScreenHeight = 1080;
-    WindowStyle = WS_OVERLAPPEDWINDOW;
+    RECT WindowRect = { 0, 0, ScreenWidth, ScreenHeight };
 
-    WindowHandle = ::CreateWindowW(WindowClass.lpszClassName, AppName.c_str(), WindowStyle, CW_USEDEFAULT, CW_USEDEFAULT, ScreenWidth, ScreenHeight, nullptr, nullptr, InstanceHandle, this);
+    ::AdjustWindowRect(&WindowRect, WindowStyle, FALSE);
+
+    int ActualWidth = WindowRect.right - WindowRect.left;
+    int ActualHeight = WindowRect.bottom - WindowRect.top;
+
+    WindowHandle = ::CreateWindowW(WindowClass.lpszClassName, AppName.c_str(), WindowStyle,
+        CW_USEDEFAULT, CW_USEDEFAULT, ActualWidth, ActualHeight, nullptr, nullptr, InstanceHandle, this);
     if (!WindowHandle) return false;
 
     ::SetWindowLongPtrW(WindowHandle, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(this));
@@ -309,11 +315,96 @@ void UApp::Picking()
 {
     if (bPendingPick && SceneManager && SceneManager->GetGrid())
     {
-        Math::FRay Ray = CalculatePickingRay(CameraState, PickPosition.x, PickPosition.y, ScreenWidth, ScreenHeight);
+        // 1. 화면 클릭 좌표를 기반으로 World 공간의 Ray 생성
+        Math::FRay WorldRay = CalculatePickingRay(CameraState, PickPosition.x, PickPosition.y, ScreenWidth, ScreenHeight);
 
+        // 2. 정밀 검사(Narrow Phase)를 수행할 람다 함수 정의
+        auto PreciseTriangleTest = [&](uint32_t ObjIndex, float& OutHitDistance) -> bool
+            {
+                const Scene::FSceneDataSOA* SceneData = SceneManager->GetSceneData();
+                uint32_t MeshID = SceneData->MeshIDs[ObjIndex];
+
+                // 렌더러에서 해당 객체의 Mesh(정점/인덱스) 데이터 가져오기
+                const auto* MeshRes = Renderer->GetMeshResource(MeshID);
+                if (!MeshRes || MeshRes->SourceIndices.empty()) return false;
+
+                // --- Ray를 객체의 Local 공간으로 변환 (역행렬 사용) ---
+                const auto& PMat = SceneData->WorldMatrices[ObjIndex];
+                DirectX::XMMATRIX WorldMat = DirectX::XMMatrixSet(
+                    DirectX::XMVectorGetX(PMat.Row0), DirectX::XMVectorGetY(PMat.Row0), DirectX::XMVectorGetZ(PMat.Row0), 0.0f,
+                    DirectX::XMVectorGetX(PMat.Row1), DirectX::XMVectorGetY(PMat.Row1), DirectX::XMVectorGetZ(PMat.Row1), 0.0f,
+                    DirectX::XMVectorGetX(PMat.Row2), DirectX::XMVectorGetY(PMat.Row2), DirectX::XMVectorGetZ(PMat.Row2), 0.0f,
+                    DirectX::XMVectorGetW(PMat.Row0), DirectX::XMVectorGetW(PMat.Row1), DirectX::XMVectorGetW(PMat.Row2), 1.0f);
+
+                DirectX::XMVECTOR Det;
+                DirectX::XMMATRIX InvWorld = DirectX::XMMatrixInverse(&Det, WorldMat);
+
+                DirectX::XMVECTOR LocalOrigin = DirectX::XMVector3TransformCoord(DirectX::XMLoadFloat3(&WorldRay.Origin), InvWorld);
+                DirectX::XMVECTOR LocalDir = DirectX::XMVector3TransformNormal(DirectX::XMLoadFloat3(&WorldRay.Direction), InvWorld);
+                LocalDir = DirectX::XMVector3Normalize(LocalDir); // 정규화 필수
+
+                bool bHit = false;
+                float ClosestWorldT = OutHitDistance; // 현재 AABB까지의 거리
+
+                // --- Ray-Triangle 교차 검사 (Möller–Trumbore 알고리즘) ---
+                for (size_t i = 0; i < MeshRes->SourceIndices.size(); i += 3)
+                {
+                    uint32_t i0 = MeshRes->SourceIndices[i];
+                    uint32_t i1 = MeshRes->SourceIndices[i + 1];
+                    uint32_t i2 = MeshRes->SourceIndices[i + 2];
+
+                    DirectX::XMVECTOR V0 = DirectX::XMLoadFloat3(&MeshRes->SourceVertices[i0].Position);
+                    DirectX::XMVECTOR V1 = DirectX::XMLoadFloat3(&MeshRes->SourceVertices[i1].Position);
+                    DirectX::XMVECTOR V2 = DirectX::XMLoadFloat3(&MeshRes->SourceVertices[i2].Position);
+
+                    DirectX::XMVECTOR Edge1 = DirectX::XMVectorSubtract(V1, V0);
+                    DirectX::XMVECTOR Edge2 = DirectX::XMVectorSubtract(V2, V0);
+                    DirectX::XMVECTOR H = DirectX::XMVector3Cross(LocalDir, Edge2);
+
+                    float A = DirectX::XMVectorGetX(DirectX::XMVector3Dot(Edge1, H));
+                    if (A > -0.00001f && A < 0.00001f) continue; // Ray가 삼각형과 평행함
+
+                    float F = 1.0f / A;
+                    DirectX::XMVECTOR S = DirectX::XMVectorSubtract(LocalOrigin, V0);
+                    float U = F * DirectX::XMVectorGetX(DirectX::XMVector3Dot(S, H));
+                    if (U < 0.0f || U > 1.0f) continue;
+
+                    DirectX::XMVECTOR Q = DirectX::XMVector3Cross(S, Edge1);
+                    float V = F * DirectX::XMVectorGetX(DirectX::XMVector3Dot(LocalDir, Q));
+                    if (V < 0.0f || U + V > 1.0f) continue;
+
+                    float LocalT = F * DirectX::XMVectorGetX(DirectX::XMVector3Dot(Edge2, Q));
+
+                    // 삼각형과 교차함!
+                    if (LocalT > 0.00001f)
+                    {
+                        // 로컬 공간에서 부딪힌 점을 찾아 다시 월드 공간으로 변환 (스케일 오차 보정)
+                        DirectX::XMVECTOR LocalIntersection = DirectX::XMVectorAdd(LocalOrigin, DirectX::XMVectorScale(LocalDir, LocalT));
+                        DirectX::XMVECTOR WorldIntersection = DirectX::XMVector3TransformCoord(LocalIntersection, WorldMat);
+
+                        // 실제 월드 공간 기준의 거리를 계산
+                        DirectX::XMVECTOR DistVec = DirectX::XMVectorSubtract(WorldIntersection, DirectX::XMLoadFloat3(&WorldRay.Origin));
+                        float WorldT = DirectX::XMVectorGetX(DirectX::XMVector3Length(DistVec));
+
+                        // 지금까지 찾은 것 중 가장 가깝다면 갱신
+                        if (WorldT < ClosestWorldT)
+                        {
+                            ClosestWorldT = WorldT;
+                            bHit = true;
+                        }
+                    }
+                }
+
+                if (bHit) OutHitDistance = ClosestWorldT;
+                return bHit;
+            };
+
+        // 3. Grid에 Ray와 람다 함수(정밀 검사)를 함께 넘겨줍니다.
         uint32_t HitIndex = 0;
-        float HitDistance = 0.0f;
-        if (SceneManager->GetGrid()->Raycast(Ray, 1000.0f, HitIndex, HitDistance))
+        float HitDistance = 1000.0f; // 최대 거리 설정
+
+        // 템플릿 처리된 Raycast 호출!
+        if (SceneManager->GetGrid()->Raycast(WorldRay, 1000.0f, HitIndex, HitDistance, PreciseTriangleTest))
         {
             SceneManager->SelectObject(HitIndex);
         }
@@ -321,6 +412,7 @@ void UApp::Picking()
         {
             SceneManager->ClearSelection();
         }
+
         bPendingPick = false;
     }
 }
