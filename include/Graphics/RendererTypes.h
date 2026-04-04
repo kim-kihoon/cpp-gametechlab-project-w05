@@ -8,6 +8,7 @@ namespace Graphics
         bool bDrawGizmo = true;
         bool bDrawWorldAxes = true;
         bool bDrawGrid = true;
+        bool bDrawBVH = false;
     };
 
     struct FCameraState

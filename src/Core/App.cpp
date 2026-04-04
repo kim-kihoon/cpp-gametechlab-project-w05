@@ -305,8 +305,8 @@ void UApp::UniformCullingAndRenderCollect()
         SceneData->ResetRenderQueue();
         SceneData->IsVisible.fill(false);
 
-        // UniformGrid 대신 SceneBVH를 사용합니다.
-        SceneManager->GetSceneBVH()->QueryFrustum(
+        // SceneBVH 대신 UniformGrid를 사용합니다.
+        SceneManager->GetGrid()->QueryFrustum(
             CameraFrustum,
             SceneData->RenderQueue.data(),
             SceneData->RenderCount,
@@ -374,7 +374,7 @@ bool UApp::CheckHit(const DirectX::XMFLOAT3& cameraPosition, const Math::FRay& p
             return bHit;
         };
 
-    return SceneManager->GetSceneBVH()->Raycast(pickRay, 1000.0f, OutHitIndex, HitDistance, PreciseTriangleTest);
+    return SceneManager->GetGrid()->Raycast(pickRay, 1000.0f, OutHitIndex, HitDistance, PreciseTriangleTest);
 }
 
 void UApp::Picking()
@@ -383,6 +383,8 @@ void UApp::Picking()
     {
         Core::GPerformanceMetrics.BVHNodeTestCount = 0;
         Core::GPerformanceMetrics.ObjectAABBTestCount = 0;
+        Core::GPerformanceMetrics.GridCellTestCount = 0;
+        Core::GPerformanceMetrics.GridObjectAABBTestCount = 0;
 
         // 1) 마우스 화면 좌표 획득
         int screenX = PickPosition.x;

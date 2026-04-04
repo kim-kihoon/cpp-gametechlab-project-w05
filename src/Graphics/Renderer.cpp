@@ -869,6 +869,7 @@ namespace Graphics
         }
 
         DrawDebugBVH(InSceneManager);
+        DrawDebugGrid(InSceneManager);
         if (DebugRenderer)
         {
             DebugRenderer->Render(Context.Get(), view * proj);
@@ -877,10 +878,7 @@ namespace Graphics
 
     void URenderer::DrawDebugBVH(const Scene::USceneManager& InSceneManager)
     {
-        // BVH AABB 박스 디버그 드로우 토글 (원할 때 아래 return 문을 주석 처리하면 박스가 그려집니다)
-         return;
-
-        if (!DebugRenderer) return;
+        if (!DebugSettings.bDrawBVH || !DebugRenderer) return;
 
         const Scene::FSceneBVH* BVH = InSceneManager.GetSceneBVH();
         if (!BVH || BVH->Nodes.empty()) return;
@@ -889,6 +887,24 @@ namespace Graphics
         {
             DirectX::XMFLOAT4 Color = Node.IsLeaf() ? DirectX::XMFLOAT4{1.0f, 0.0f, 0.0f, 1.0f} : DirectX::XMFLOAT4{0.0f, 1.0f, 0.0f, 1.0f};
             DebugRenderer->AddBox(Node.Bounds, Color);
+        }
+    }
+
+    void URenderer::DrawDebugGrid(const Scene::USceneManager& InSceneManager)
+    {
+        if (!DebugSettings.bDrawGrid || !DebugRenderer) return;
+
+        const Scene::UUniformGrid* Grid = InSceneManager.GetGrid();
+        if (!Grid) return;
+
+        const auto& Cells = Grid->GetCells();
+        for (const auto& Cell : Cells)
+        {
+            if (Cell.Count > 0)
+            {
+                // 객체가 있는 셀은 파란색, 빈 셀은 그리지 않거나 아주 흐리게
+                DebugRenderer->AddBox(Cell.CellBox, { 0.0f, 0.5f, 1.0f, 1.0f });
+            }
         }
     }
 

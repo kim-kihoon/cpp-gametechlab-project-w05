@@ -3,6 +3,7 @@
 #include <array>
 #include <Math/Frustum.h>
 #include <Scene/SceneData.h>
+#include <Core/AppTypes.h>
 
 namespace Scene
 {
@@ -49,6 +50,8 @@ namespace Scene
         // void InsertObject(uint32_t ObjectIndex);
         void QueryFrustum(const Math::FFrustum& Frustum, uint32_t* OutIndices, uint32_t& OutCount, uint32_t MaxCapacity);
 
+        const std::vector<FGridCell>& GetCells() const { return Cells; }
+
         template <typename NarrowPhaseFunc>
         bool Raycast(const Math::FRay& Ray, float MaxDistance, uint32_t& OutHitIndex, float& OutHitDistance, NarrowPhaseFunc NarrowPhaseTest);
     };
@@ -80,6 +83,7 @@ namespace Scene
 
         while (GridX >= 0 && GridX < Width && GridY >= 0 && GridY < Height && GridZ >= 0 && GridZ < Depth)
         {
+            Core::GPerformanceMetrics.GridCellTestCount++;
             const FGridCell& Cell = Cells[GridX + (GridY * Width) + (GridZ * Width * Height)];
 
             if (Cell.Count > 0)
@@ -95,6 +99,8 @@ namespace Scene
 
                     if (VisitTokens[Idx] == CurrentVisitToken) continue;
                     VisitTokens[Idx] = CurrentVisitToken;
+
+                    Core::GPerformanceMetrics.GridObjectAABBTestCount++;
                     // --- 1. AABB 광역 검사 (Broad Phase) ---
                     float t1 = (SceneData->MinX[Idx] - Ray.Origin.x) * Ray.InvDirection.x;
                     float t2 = (SceneData->MaxX[Idx] - Ray.Origin.x) * Ray.InvDirection.x;

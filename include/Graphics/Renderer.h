@@ -89,6 +89,7 @@ namespace Graphics
     private:
         bool CreateDefaultResources();
         void DrawDebugBVH(const Scene::USceneManager& InSceneManager); // 추가: BVH AABB 디버그 드로우 함수
+        void DrawDebugGrid(const Scene::USceneManager& InSceneManager); // 추가: Uniform Grid 디버그 드로우 함수
 
     private:
         static constexpr uint32_t MAX_MESH_TYPES = 2;

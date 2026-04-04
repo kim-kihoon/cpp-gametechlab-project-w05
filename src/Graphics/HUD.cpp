@@ -30,7 +30,7 @@ namespace Graphics
                 float2 UV : TEXCOORD0;
             };
             struct PS_IN {
-                float4 Pos : SV_POSITION;
+                float4 Pos : SV_POSITION;   
                 float2 UV : TEXCOORD0;
             };
 
@@ -144,6 +144,7 @@ namespace Graphics
 
         char Buffer[256];
         char Buffer2[256];
+        char Buffer3[256];
 
         float FrameMS = (InMetrics.FramesPerSecond > 0.0f) ? (1000.0f / InMetrics.FramesPerSecond) : 0.0f;
 
@@ -161,8 +162,14 @@ namespace Graphics
             InMetrics.BVHNodeTestCount,
             InMetrics.ObjectAABBTestCount);
 
+        std::snprintf(Buffer3, sizeof(Buffer3),
+            "Grid Tests -> Cells: %u, Object AABBs: %u",
+            InMetrics.GridCellTestCount,
+            InMetrics.GridObjectAABBTestCount);
+
         BatchText(Buffer, 10.0f, 10.0f);
         BatchText(Buffer2, 10.0f, 30.0f);
+        BatchText(Buffer3, 10.0f, 50.0f);
     }
 
     void FHUD::Render()
