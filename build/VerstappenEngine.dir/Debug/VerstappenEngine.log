@@ -1,8 +1,0 @@
-﻿  Renderer.cpp
-C:\cpp-gametechlab-project-w05\include\Scene\SceneData.h(36,55): warning C4324: 'Scene::FSceneDataSOA': 맞춤 지정자 때문에 구조체가 채워졌습니다.
-  (소스 파일 '../src/Graphics/Renderer.cpp'을(를) 컴파일하는 중)
-  
-C:\cpp-gametechlab-project-w05\include\Math\Frustum.h(19,27): warning C4324: 'Math::FFrustum': 맞춤 지정자 때문에 구조체가 채워졌습니다.
-  (소스 파일 '../src/Graphics/Renderer.cpp'을(를) 컴파일하는 중)
-  
-  VerstappenEngine.vcxproj -> C:\cpp-gametechlab-project-w05\build\Debug\VerstappenEngine.exe
