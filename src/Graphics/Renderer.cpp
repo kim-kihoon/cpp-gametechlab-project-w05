@@ -491,7 +491,7 @@ namespace Graphics
                     DirectX::XMVECTOR H = DirectX::XMVector3Cross(LocalDir, Edge2);
 
                     float A = DirectX::XMVectorGetX(DirectX::XMVector3Dot(Edge1, H));
-                    if (A > -0.00001f && A < 0.00001f) continue;
+                    if (A < 0.00001f) continue;
 
                     float F = 1.0f / A;
                     DirectX::XMVECTOR S = DirectX::XMVectorSubtract(LocalOrigin, V0);
