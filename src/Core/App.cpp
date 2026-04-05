@@ -506,49 +506,50 @@ void UApp::UpdateCamera(float InDeltaTime)
 void UApp::UpdateFramePerformanceMetrics(float InDeltaTime)
 {
     Core::GPerformanceMetrics.DeltaTimeSeconds = InDeltaTime;
-    //     Core::GPerformanceMetrics.ElapsedTimeMilliseconds = InDeltaTime * 1000.0f;
-    Core::GPerformanceMetrics.FramesPerSecond = (InDeltaTime > 0.0f) ? (1.0f / InDeltaTime) : 0.0f;
+    
+    const float RawFPS = (InDeltaTime > 0.0f) ? (1.0f / InDeltaTime) : 0.0f;
+    
+    // 지수 이동 평균(EMA) 필터 적용 (알파 = 0.05)
+    // 화면상에 표시되는 FPS가 부드럽게 변하도록 합니다.
+    if (Core::GPerformanceMetrics.FramesPerSecond < 1.0f)
+    {
+        Core::GPerformanceMetrics.FramesPerSecond = RawFPS;
+    }
+    else
+    {
+        constexpr float Alpha = 0.05f;
+        Core::GPerformanceMetrics.FramesPerSecond = (RawFPS * Alpha) + (Core::GPerformanceMetrics.FramesPerSecond * (1.0f - Alpha));
+    }
+
     ++Core::GPerformanceMetrics.FrameIndex;
 
-    static float TitleUpdateAccumulator = 0.0f;
-    static uint64_t TitleUpdateFrames = 0;
+    static float FPSAccumulator = 0.0f;
+    static uint64_t FPSFrameCount = 0;
 
-    TitleUpdateAccumulator += InDeltaTime;
-    ++TitleUpdateFrames;
+    FPSAccumulator += InDeltaTime;
+    ++FPSFrameCount;
 
-    if (TitleUpdateAccumulator < 0.5f || !WindowHandle || !SceneManager)
+    // 0.5초마다 평균 FPS 업데이트 (HUD 표시용)
+    if (FPSAccumulator >= 0.5f)
+    {
+        Core::GPerformanceMetrics.AverageFPS = static_cast<float>(FPSFrameCount) / FPSAccumulator;
+        FPSAccumulator = 0.0f;
+        FPSFrameCount = 0;
+    }
+
+    if (!WindowHandle || !SceneManager)
     {
         return;
     }
 
-    const float AverageFPS = (TitleUpdateAccumulator > 0.0f) ? (static_cast<float>(TitleUpdateFrames) / TitleUpdateAccumulator) : 0.0f;
-    const float AverageFrameMilliseconds = (TitleUpdateFrames > 0) ? ((TitleUpdateAccumulator * 1000.0f) / static_cast<float>(TitleUpdateFrames)) : 0.0f;
-
     const uint32_t TotalObjects = SceneManager->GetObjectCount();
     const uint32_t VisibleObjects = SceneManager->GetVisibleObjectCount();
 
-    // 렌더링 단계별 가공 데이터 (현재는 플레이스홀더, 실제 측정 로직 추가 가능)
-    Core::GPerformanceMetrics.SplitTime = 0.04f;
-    Core::GPerformanceMetrics.PrepassTime = 0.37f;
-    Core::GPerformanceMetrics.HiZTime = 0.00f;
-    Core::GPerformanceMetrics.CullTime = 0.13f;
-    Core::GPerformanceMetrics.DrawTime = 0.37f;
-
+    // 렌더링 단계별 가공 데이터 업데이트 (HUD 연동)
     Core::GPerformanceMetrics.DrawCount = VisibleObjects;
     Core::GPerformanceMetrics.TotalObjectsCount = TotalObjects;
-    Core::GPerformanceMetrics.PrevVisible = VisibleObjects; // 임시
+    Core::GPerformanceMetrics.PrevVisible = VisibleObjects;
     Core::GPerformanceMetrics.PrevInvisible = TotalObjects - VisibleObjects;
-
-    std::wostringstream TitleStream;    TitleStream.precision(2);
-    TitleStream << std::fixed
-        << L"Verstappen Engine | Scene Preview | FPS(avg): " << AverageFPS
-        << L" | Frame(ms): " << AverageFrameMilliseconds
-        << L" | FrustumVisible: " << VisibleObjects
-        << L"/" << TotalObjects;
-    ::SetWindowTextW(WindowHandle, TitleStream.str().c_str());
-
-    TitleUpdateAccumulator = 0.0f;
-    TitleUpdateFrames = 0;
 }
 
 LRESULT CALLBACK UApp::WindowProc(HWND hWnd, UINT Message, WPARAM wParam, LPARAM lParam)
