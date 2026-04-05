@@ -153,12 +153,13 @@ namespace Graphics
         double AvgPickingMS = (InMetrics.TotalPickCount > 0) ? (TotalPickingMS / static_cast<double>(InMetrics.TotalPickCount)) : 0.0;
 
         std::snprintf(Buffer, sizeof(Buffer),
-            "FPS: %.1f(%.1fms) Pick: L:%.4fms A:%.4fms T:%.4fms",
+            "FPS: %.1f(%.1fms) Pick: L:%.4fms A:%.4fms T:%.4fms, Pick Count: %d",
             InMetrics.FramesPerSecond,
             FrameMS,
             LastPickingMS,
             AvgPickingMS,
-            TotalPickingMS);
+            TotalPickingMS,
+            InMetrics.TotalPickCount);
 
         std::snprintf(Buffer2, sizeof(Buffer2),
             "BVH Tests -> Nodes: %u, Object AABBs: %u",
