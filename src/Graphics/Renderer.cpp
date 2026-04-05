@@ -880,7 +880,8 @@ namespace Graphics
             sbd.BindFlags = 0;
             sbd.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
             sbd.MiscFlags = 0;
-            Device->CreateBuffer(&sbd, nullptr, &VisibilityStagingBuffer);
+            Device->CreateBuffer(&sbd, nullptr, &VisibilityStagingBuffers[0]);
+            Device->CreateBuffer(&sbd, nullptr, &VisibilityStagingBuffers[1]);
         }
 
         // ── CullParam / HiZBuildParam cbuffer ────────────────────────────────────
@@ -1036,29 +1037,41 @@ namespace Graphics
         }
 
         // ── 4. GPU → CPU Readback ────────────────────────────────────────────────
-        Context->CopyResource(VisibilityStagingBuffer.Get(), VisibilityBuffer.Get());
+        Context->CopyResource(VisibilityStagingBuffers[StagingWriteIndex].Get(),
+            VisibilityBuffer.Get());
 
-        D3D11_MAPPED_SUBRESOURCE mr = {};
-        if (FAILED(Context->Map(VisibilityStagingBuffer.Get(), 0, D3D11_MAP_READ, 0, &mr)))
+        // 첫 프레임은 이전 결과가 없으므로 전부 Visible 처리 (Staging 버퍼 스왑만)
+        if (bFirstFrame)
+        {
+            bFirstFrame = false;
+            std::swap(StagingReadIndex, StagingWriteIndex);
             return;
+        }
+
+        // ── 6. 이전 프레임 결과로 RenderQueue 압축 (GPU stall 없음) ───────────────
+        D3D11_MAPPED_SUBRESOURCE mr = {};
+        if (FAILED(Context->Map(VisibilityStagingBuffers[StagingReadIndex].Get(),
+            0, D3D11_MAP_READ, 0, &mr)))
+        {
+            std::swap(StagingReadIndex, StagingWriteIndex);
+            return;
+        }
 
         const uint32_t* flags = static_cast<const uint32_t*>(mr.pData);
 
-        // ── 5. RenderQueue 인플레이스 압축 ──────────────────────────────────────
         uint32_t newCount = 0;
         for (uint32_t i = 0; i < Count; ++i)
         {
             const uint32_t oid = SceneData->RenderQueue[i];
             const bool     visible = (flags[oid] != 0);
-
             SceneData->IsVisible[oid] = visible;
-
             if (visible)
                 SceneData->RenderQueue[newCount++] = oid;
         }
         SceneData->RenderCount = newCount;
 
-        Context->Unmap(VisibilityStagingBuffer.Get(), 0);
+        Context->Unmap(VisibilityStagingBuffers[StagingReadIndex].Get(), 0);
+        std::swap(StagingReadIndex, StagingWriteIndex);
     }
 
     void URenderer::BeginFrame()
@@ -1101,17 +1114,18 @@ namespace Graphics
             aspect, CameraState.NearClip, CameraState.FarClip);
         const DirectX::XMMATRIX viewProj = view * proj;
 
+        const uint32_t AlignedConstantSize = 256;
+        const uint32_t BufferCapacity = 64 * 1024 * 1024;
+
+        auto t0 = std::chrono::high_resolution_clock::now();
         // ── Pass 1: Depth Prepass ────────────────────────────────────────────────
         Context->ClearDepthStencilView(DepthStencilView.Get(), D3D11_CLEAR_DEPTH, 1.0f, 0);
-
-        // RTV 없이 depth-only 렌더
         ID3D11RenderTargetView* nullRTV = nullptr;
         Context->OMSetRenderTargets(0, &nullRTV, DepthStencilView.Get());
-
         Context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
         Context->IASetInputLayout(InputLayout.Get());
         Context->VSSetShader(VertexShader.Get(), nullptr, 0);
-        Context->PSSetShader(nullptr, nullptr, 0);  // PS 없이 depth-only
+        Context->PSSetShader(nullptr, nullptr, 0);
         Context->VSSetConstantBuffers(0, 1, PerFrameBuffer.GetAddressOf());
         Context->RSSetState(DefaultRasterizerState.Get());
         Context->OMSetDepthStencilState(DefaultDepthStencilState.Get(), 0);
@@ -1128,8 +1142,40 @@ namespace Graphics
             }
         }
 
-        // Depth prepass draw (모든 오브젝트)
-        for (uint32_t i = 0; i < SceneData->RenderCount; ++i)
+        // 링버퍼 방식으로 일괄 Map/Unmap
+        const uint32_t PrepassCount = SceneData->RenderCount;
+        const uint32_t PrepassBulk = PrepassCount * AlignedConstantSize;
+
+        D3D11_MAP PrepassMapType = D3D11_MAP_WRITE_NO_OVERWRITE;
+        if (PerObjectRingBufferOffset + PrepassBulk > BufferCapacity)
+        {
+            PrepassMapType = D3D11_MAP_WRITE_DISCARD;
+            PerObjectRingBufferOffset = 0;
+        }
+
+        D3D11_MAPPED_SUBRESOURCE PrepassMap = {};
+        if (FAILED(Context->Map(PerObjectBuffer.Get(), 0, PrepassMapType, 0, &PrepassMap))) return;
+
+        uint8_t* PrepassDest = static_cast<uint8_t*>(PrepassMap.pData) + PerObjectRingBufferOffset;
+
+        for (uint32_t i = 0; i < PrepassCount; ++i)
+        {
+            const uint32_t oid = SceneData->RenderQueue[i];
+            const Math::FPacked3x4Matrix& mat = SceneData->WorldMatrices[oid];
+            FPerObjectConstants* dest = reinterpret_cast<FPerObjectConstants*>(
+                PrepassDest + i * AlignedConstantSize);
+            DirectX::XMStoreFloat4(&dest->Row0, mat.Row0);
+            DirectX::XMStoreFloat4(&dest->Row1, mat.Row1);
+            DirectX::XMStoreFloat4(&dest->Row2, mat.Row2);
+            dest->ColorModifier = { 0, 0, 0, 0 };
+        }
+        Context->Unmap(PerObjectBuffer.Get(), 0);
+
+        const uint32_t PrepassBase = PerObjectRingBufferOffset;
+        PerObjectRingBufferOffset += PrepassBulk;
+
+        // Draw
+        for (uint32_t i = 0; i < PrepassCount; ++i)
         {
             const uint32_t oid = SceneData->RenderQueue[i];
             const uint32_t mid = SceneData->MeshIDs[oid];
@@ -1138,44 +1184,41 @@ namespace Graphics
             const FMeshResource& res = MeshResources[mid];
             if (!res.VertexBuffer || !res.IndexBuffer) continue;
 
+            if (Context1)
+            {
+                UINT off = (PrepassBase + i * AlignedConstantSize) / 16;
+                UINT cnt = AlignedConstantSize / 16;
+                Context1->VSSetConstantBuffers1(1, 1, PerObjectBuffer.GetAddressOf(), &off, &cnt);
+            }
+            else
+            {
+                Context->VSSetConstantBuffers(1, 1, PerObjectBuffer.GetAddressOf());
+            }
+
             UINT stride = sizeof(FMeshVertex), offset = 0;
             Context->IASetVertexBuffers(0, 1, res.VertexBuffer.GetAddressOf(), &stride, &offset);
             Context->IASetIndexBuffer(res.IndexBuffer.Get(), DXGI_FORMAT_R32_UINT, 0);
-
-            // PerObject 상수 (위치만 필요)
-            {
-                D3D11_MAPPED_SUBRESOURCE mr = {};
-                if (SUCCEEDED(Context->Map(PerObjectBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mr)))
-                {
-                    const Math::FPacked3x4Matrix& mat = SceneData->WorldMatrices[oid];
-                    FPerObjectConstants* dest = static_cast<FPerObjectConstants*>(mr.pData);
-                    DirectX::XMStoreFloat4(&dest->Row0, mat.Row0);
-                    DirectX::XMStoreFloat4(&dest->Row1, mat.Row1);
-                    DirectX::XMStoreFloat4(&dest->Row2, mat.Row2);
-                    dest->ColorModifier = { 0, 0, 0, 0 };
-                    Context->Unmap(PerObjectBuffer.Get(), 0);
-                }
-            }
-            Context->VSSetConstantBuffers(1, 1, PerObjectBuffer.GetAddressOf());
             Context->DrawIndexed(res.IndexCount, 0, 0);
         }
 
         // ── Hi-Z 빌드 ────────────────────────────────────────────────────────────
         ID3D11DepthStencilView* nullDSV = nullptr;
         Context->OMSetRenderTargets(0, &nullRTV, nullDSV);  // DSV 해제
+
+        auto t1 = std::chrono::high_resolution_clock::now();
         BuildHiZMips();
+        auto t2 = std::chrono::high_resolution_clock::now();
 
         // ── Occlusion Cull ───────────────────────────────────────────────────────
         RunOcclusionCull(SceneData, viewProj);
+        auto t3 = std::chrono::high_resolution_clock::now();
 
         // ── Pass 2: 최종 렌더 (visible만) ────────────────────────────────────────
         const uint32_t SourceCount = SceneData->RenderCount;
         CurrentMetrics.RenderedObjectCount = SourceCount;
         if (SourceCount == 0) return;
 
-        const uint32_t AlignedConstantSize = 256;
         const uint32_t BulkSize = SourceCount * AlignedConstantSize;
-        const uint32_t BufferCapacity = 64 * 1024 * 1024;
 
         D3D11_MAP MapType = D3D11_MAP_WRITE_NO_OVERWRITE;
         if (PerObjectRingBufferOffset + BulkSize > BufferCapacity)
@@ -1285,6 +1328,18 @@ namespace Graphics
                 Context->DrawIndexed(res.IndexCount, 0, 0);
             }
         }
+
+        auto t4 = std::chrono::high_resolution_clock::now();
+
+        // CPU 시간 출력
+        auto ms = [](auto a, auto b) {
+            return std::chrono::duration<float, std::milli>(b - a).count();
+            };
+
+        char buf[256];
+        sprintf_s(buf, "Prepass=%.2fms  HiZ=%.2fms  Cull=%.2fms  Draw=%.2fms\n",
+            ms(t0, t1), ms(t1, t2), ms(t2, t3), ms(t3, t4));
+        OutputDebugStringA(buf);
     }
 
     void URenderer::EndFrame() { SwapChain->Present(0, DXGI_PRESENT_ALLOW_TEARING); }

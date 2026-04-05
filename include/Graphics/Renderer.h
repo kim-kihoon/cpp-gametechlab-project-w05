@@ -120,7 +120,10 @@ namespace Graphics
 
         ComPtr<ID3D11Buffer>                             VisibilityBuffer;
         ComPtr<ID3D11UnorderedAccessView>                VisibilityUAV;
-        ComPtr<ID3D11Buffer>                             VisibilityStagingBuffer;
+        ComPtr<ID3D11Buffer> VisibilityStagingBuffers[2];
+        uint32_t             StagingReadIndex = 0;
+        uint32_t             StagingWriteIndex = 1;
+        bool                 bFirstFrame = true;
 
         ComPtr<ID3D11Buffer>                             CullParamBuffer;
         ComPtr<ID3D11Buffer>                             HiZBuildParamBuffer;
