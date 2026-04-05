@@ -151,10 +151,10 @@ namespace Graphics
                     }
                 }
             }
-
+            const std::wstring MeshBase = Core::FPathManager::GetMeshPath();
             texPath = (path.find(L"bitten") != std::wstring::npos)
-                ? L"Data/JungleApples/Bitten_Apple_tgyociqpa_Mid_2K_BaseColor.jpg"
-                : L"Data/JungleApples/Freshly_Bitten_Apple_tgzpdhlpa_Mid_2K_BaseColor.jpg";
+                ? MeshBase + L"Bitten_Apple_tgyociqpa_Mid_2K_BaseColor.jpg"
+                : MeshBase + L"Freshly_Bitten_Apple_tgzpdhlpa_Mid_2K_BaseColor.jpg";
 
             return !verts.empty();
         }
