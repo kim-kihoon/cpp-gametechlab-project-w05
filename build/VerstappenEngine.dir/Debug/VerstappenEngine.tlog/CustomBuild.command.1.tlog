@@ -1,0 +1,10 @@
+^C:\CPP-GAMETECHLAB-PROJECT-W05\CMAKELISTS.TXT
+setlocal
+"C:\Program Files\CMake\bin\cmake.exe" -SC:/cpp-gametechlab-project-w05 -BC:/cpp-gametechlab-project-w05/build --check-stamp-file C:/cpp-gametechlab-project-w05/build/CMakeFiles/generate.stamp
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd

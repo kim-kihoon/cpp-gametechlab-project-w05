@@ -1,0 +1,108 @@
+34 [18020] INFO perfrun.launcher <> - Launcher main begin
+38 [18020] INFO perfrun.launcher <> - MessageCatalogInit finished
+38 [18020] INFO perfrun.launcher <> - Launcher instance created
+38 [18020] INFO perfrun.launcher <> - argc = 7; cmdline = C:\Program Files (x86)\Intel\oneAPI\vtune\2025.10\bin64\amplxe-runss.exe --ui-output-format xml --ui-output-fd 1448 --option-file C:\cpp-gametechlab-project-w05\build\Intel® VTune™ Profiler Results\VerstappenEngine\r000ps\config\runsa.options 
+46 [18020] INFO perfrun.launcher <> - New signal handler callback was added
+66 [18020] INFO perfrun.perfcollector <> - SEP tool path: C:\Program Files (x86)\Intel\oneAPI\vtune\2025.10\bin64\sep.exe
+73 [18020] INFO perfrun.launcher <> - create msngr2::ICliToolContext
+74 [18020] INFO perfrun.launcher <> - create file finder object
+74 [18020] INFO perfrun.launcher <> - create a result directory: pattern = C:\cpp-gametechlab-project-w05\build\Intel® VTune™ Profiler Results\VerstappenEngine\r000ps pid = 4294967295
+76 [18020] INFO perfrun.launcher <> - create data directory = C:\cpp-gametechlab-project-w05\build\Intel® VTune™ Profiler Results\VerstappenEngine\r000ps\data.0
+77 [18020] INFO perfrun.launcher <> - Creating the master collection flag
+83 [18020] INFO perfrun.launcher <> - Done creating the master collection flag
+83 [6488] INFO perfrun.launcher <> - plugin [remoteplug] was disabled because it doesn't support the given collection type.
+84 [6488] INFO perfrun.sdk <> - Allocating TMU :C:\cpp-gametechlab-project-w05\build\Intel® VTune™ Profiler Results\VerstappenEngine\r000ps\data.0\systemcollector-25040-DESKTOP-UFL5EJM.sc
+84 [6488] INFO perfrun.launcher <> - plugin [] was disabled because it doesn't support the given collection type.
+84 [6488] INFO perfrun.launcher <> - plugin [itt] was disabled because it doesn't support the given collection type.
+84 [6488] INFO perfrun.launcher <> - plugin [] was disabled because it doesn't support the given collection type.
+84 [6488] INFO perfrun.launcher <> - plugin [gpu] was disabled because it doesn't support the given collection type.
+84 [6488] INFO perfrun.launcher <> - plugin [etw.kernel] was disabled because it doesn't support the given collection type.
+84 [6488] INFO perfrun.launcher <> - plugin [etw.dx] was disabled because it doesn't support the given collection type.
+84 [6488] INFO perfrun.launcher <> - plugin [etw.wsa] was disabled because it doesn't support the given collection type.
+84 [6488] INFO perfrun.mrte <> - system-wide mode is 0
+84 [6488] INFO perfrun.mrte <> - Getting  mrte profiling environment ...
+97 [6488] INFO perfrun.mrte <> - INTEL_MRTE_DATA_DIR=C:\cpp-gametechlab-project-w05\build\Intel® VTune™ Profiler Results\VerstappenEngine\r000ps\data.0
+97 [6488] INFO perfrun.mrte <> - INTEL_MRTE_HOST_NAME=DESKTOP-UFL5EJM
+97 [6488] INFO perfrun.mrte <> - JAVA_TOOL_OPTIONS=-agentlib:amplxe_samplingmrte_javaprof_1.0
+97 [6488] INFO perfrun.mrte <> - PATH=C:\Program Files (x86)\Intel\oneAPI\vtune\2025.10\bin32\runtime;C:\Program Files (x86)\Intel\oneAPI\vtune\2025.10\bin64\runtime;C:\Windows\system32;C:\Windows;C:\Windows\System32\Wbem;C:\Windows\System32\WindowsPowerShell\v1.0\;C:\Windows\System32\OpenSSH\;C:\Program Files\Git\cmd;C:\Program Files\dotnet\;C:\Program Files (x86)\Windows Kits\10\Windows Performance Toolkit\;C:\Program Files\doxygen\bin;C:\Program Files\CMake\bin;C:\Users\jungle\AppData\Local\Microsoft\WindowsApps;C:\Users\jungle\.dotnet\tools;C:\Program Files\Graphviz\bin;C:\Users\jungle\AppData\Local\Programs\Microsoft VS Code\bin
+97 [6488] INFO perfrun.mrte <> - COR_ENABLE_PROFILING=1
+97 [6488] INFO perfrun.mrte <> - COR_PROFILER={AA5E4821-E3B1-479c-B7FF-5AD047D22CED}
+97 [6488] INFO perfrun.mrte <> - COMPLUS_ProfAPI_ProfilerCompatibilitySetting=EnableV2Profiler
+97 [6488] INFO perfrun.mrte <> - CORECLR_ENABLE_PROFILING=1
+97 [6488] INFO perfrun.mrte <> - CORECLR_PROFILER={AA5E4821-E3B1-479c-B7FF-5AD047D22CED}
+97 [6488] INFO perfrun.mrte <> - CORECLR_PROFILER_PATH=C:\Program Files (x86)\Intel\oneAPI\vtune\2025.10\bin64/amplxe_samplingmrte_clrprof_1.0.dll
+97 [6488] INFO perfrun.mrte <> - INTEL_MRTE_PROFILER_MODE=mixed
+97 [6488] INFO perfrun.mrte <> - Data directory: C:\cpp-gametechlab-project-w05\build\Intel® VTune™ Profiler Results\VerstappenEngine\r000ps\data.0
+97 [6488] INFO perfrun.mrte <> - Mrte plugin is initialized
+97 [6488] INFO perfrun.launcher <> - plugin [cuscol] was disabled because it doesn't support the given collection type.
+97 [6488] INFO perfrun.launcher <> - plugin [stdsrc] was disabled because it doesn't support the given collection type.
+97 [6488] INFO perfrun.launcher <> - plugin [sep] was disabled because it doesn't support the given collection type.
+97 [6488] INFO perfrun.launcher <> - plugin [vtsspp] was disabled because it doesn't support the given collection type.
+97 [6488] INFO perfrun.launcher <> - plugin [perf] was disabled because it doesn't support the given collection type.
+97 [6488] INFO perfrun.launcher <> - plugin [aoclprofile] was disabled because it doesn't support the given collection type.
+97 [6488] INFO perfrun.tpss <> - initialize tpss controller
+97 [6488] INFO perfrun.launcher <> - plugin [tpss] was disabled because it doesn't support the given collection type.
+97 [6488] INFO perfrun.launcher <> - plugin [] was disabled because it doesn't support the given collection type.
+97 [6488] INFO perfrun.launcher <> - plugin [] was disabled because it doesn't support the given collection type.
+97 [6488] INFO perfrun.launcher <> - plugin [] was disabled because it doesn't support the given collection type.
+97 [6488] INFO perfrun.launcher <> - plugin [] was disabled because it doesn't support the given collection type.
+97 [6488] INFO perfrun.launcher <> - plugin [power] was disabled because it doesn't support the given collection type.
+97 [6488] INFO perfrun.launcher <> - plugin [] was disabled because it doesn't support the given collection type.
+97 [6488] INFO perfrun.launcher <> - plugin [] was disabled because it doesn't support the given collection type.
+97 [6488] INFO perfrun.launcher <> - plugin [] was disabled because it doesn't support the given collection type.
+97 [6488] INFO perfrun.launcher <> - plugin [l0_metrics] was disabled because it doesn't support the given collection type.
+97 [6488] INFO perfrun.launcher <> - plugin [stall_reasons] was disabled because it doesn't support the given collection type.
+97 [18020] INFO perfrun.launcher <> - set environment variable: INTEL_MRTE_DATA_DIR = C:\cpp-gametechlab-project-w05\build\Intel® VTune™ Profiler Results\VerstappenEngine\r000ps\data.0
+98 [18020] INFO perfrun.launcher <> - set environment variable: INTEL_MRTE_HOST_NAME = DESKTOP-UFL5EJM
+98 [18020] INFO perfrun.launcher <> - set environment variable: JAVA_TOOL_OPTIONS = -agentlib:amplxe_samplingmrte_javaprof_1.0
+98 [18020] INFO perfrun.launcher <> - set environment variable: PATH = C:\Program Files (x86)\Intel\oneAPI\vtune\2025.10\bin32\runtime;C:\Program Files (x86)\Intel\oneAPI\vtune\2025.10\bin64\runtime;C:\Windows\system32;C:\Windows;C:\Windows\System32\Wbem;C:\Windows\System32\WindowsPowerShell\v1.0\;C:\Windows\System32\OpenSSH\;C:\Program Files\Git\cmd;C:\Program Files\dotnet\;C:\Program Files (x86)\Windows Kits\10\Windows Performance Toolkit\;C:\Program Files\doxygen\bin;C:\Program Files\CMake\bin;C:\Users\jungle\AppData\Local\Microsoft\WindowsApps;C:\Users\jungle\.dotnet\tools;C:\Program Files\Graphviz\bin;C:\Users\jungle\AppData\Local\Programs\Microsoft VS Code\bin
+98 [18020] INFO perfrun.launcher <> - set environment variable: COR_ENABLE_PROFILING = 1
+98 [18020] INFO perfrun.launcher <> - set environment variable: COR_PROFILER = {AA5E4821-E3B1-479c-B7FF-5AD047D22CED}
+98 [18020] INFO perfrun.launcher <> - set environment variable: COMPLUS_ProfAPI_ProfilerCompatibilitySetting = EnableV2Profiler
+98 [18020] INFO perfrun.launcher <> - set environment variable: CORECLR_ENABLE_PROFILING = 1
+98 [18020] INFO perfrun.launcher <> - set environment variable: CORECLR_PROFILER = {AA5E4821-E3B1-479c-B7FF-5AD047D22CED}
+98 [18020] INFO perfrun.launcher <> - set environment variable: CORECLR_PROFILER_PATH = C:\Program Files (x86)\Intel\oneAPI\vtune\2025.10\bin64/amplxe_samplingmrte_clrprof_1.0.dll
+98 [18020] INFO perfrun.launcher <> - set environment variable: INTEL_MRTE_PROFILER_MODE = mixed
+98 [18020] INFO perfrun.launcher <> - RpcServer: run RPC server to handle requests
+101 [18020] INFO perfrun.sdk <> - IProcessUtil: the given executable 'C:\cpp-gametechlab-project-w05\build\Debug\VerstappenEngine.exe' is valid.
+101 [18020] INFO perfrun.launcher <> - Launcher: command line to start before modification = C:\cpp-gametechlab-project-w05\build\Debug\VerstappenEngine.exe
+101 [18020] INFO perfrun.launcher <> - Launcher: command line to start after modification = C:\cpp-gametechlab-project-w05\build\Debug\VerstappenEngine.exe
+101 [18020] INFO perfrun.launcher <> - ProcessCreator object was created
+103 [18020] INFO perfrun.launcher <> - Launcher: the process was started in suspend mode
+103 [6488] INFO perfrun.launcher <> - Messenger::say: Peak bandwidth measurement started.
+6744 [6488] INFO perfrun.launcher <> - Messenger::say: Peak bandwidth measurement finished.
+6747 [6488] INFO perfrun.sdk <> - runCmd: "C:\Program Files (x86)\Intel\oneAPI\vtune\2025.10\bin64\emon.exe" -M
+6749 [6488] INFO perfrun.sdk <> - runCmd started PID 24952
+6887 [6488] INFO perfrun.sdk <> - runCmd: "C:\Program Files (x86)\Intel\oneAPI\vtune\2025.10\bin64\emon.exe" -v
+6889 [6488] INFO perfrun.sdk <> - runCmd started PID 32444
+7011 [6488] INFO perfrun.sdk <> - runCmd: "C:\Program Files (x86)\Intel\oneAPI\vtune\2025.10\bin64\sep.exe" -dry-run -ec CPU_CLK_UNHALTED.THREAD:sa=2112000,CPU_CLK_UNHALTED.REF_TSC:sample:sa=2112000,INST_RETIRED.ANY:sample:sa=2112000,CPU_CLK_UNHALTED.DISTRIBUTED:sa=2112000,TOPDOWN.SLOTS:sample:sa=2000003,UOPS_RETIRED.SLOTS:sample:sa=2000003,TOPDOWN.SLOTS_P:sample:sa=2000003,TOPDOWN_RETIRING.ALL_P:sample:sa=2000003,TOPDOWN_RETIRING.ALL:sample:sa=2000003,FP_ARITH_INST_RETIRED.SCALAR_SINGLE:sa=2000003,FP_ARITH_INST_RETIRED.128B_PACKED_SINGLE:sa=2000003,FP_ARITH_INST_RETIRED.256B_PACKED_SINGLE:sa=2000003,FP_ARITH_INST_RETIRED.SCALAR_DOUBLE:sa=2000003,FP_ARITH_INST_RETIRED.128B_PACKED_DOUBLE:sa=2000003,FP_ARITH_INST_RETIRED.256B_PACKED_DOUBLE:sa=2000003,UOPS_EXECUTED.X87:sa=2000003,UOPS_EXECUTED.THREAD:sa=2000003,CPU_CLK_UNHALTED.THREAD_P,FRONTEND_RETIRED.LATENCY_GE_4,IDQ_BUBBLES.CORE,INT_MISC.UOP_DROPPING,TOPDOWN.BACKEND_BOUND_SLOTS,TOPDOWN.MEMORY_BOUND_SLOTS,TOPDOWN_BE_BOUND.ALL,TOPDOWN_FE_BOUND.ALL,EXE_ACTIVITY.BOUND_ON_LOADS,MEMORY_ACTIVITY.STALLS_L1D_MISS,MEMORY_ACTIVITY.STALLS_L2_MISS,MEMORY_ACTIVITY.STALLS_L3_MISS,MEM_LOAD_RETIRED.L1_HIT,MEM_LOAD_RETIRED.L2_HIT,MEM_LOAD_RETIRED.L3_HIT,MEM_LOAD_RETIRED.L3_MISS,LD_HEAD.ANY_AT_RET,LD_HEAD.L1_BOUND_AT_RET,LD_HEAD.L1_MISS_AT_RET,MEM_BOUND_STALLS.LOAD,MEM_BOUND_STALLS.LOAD_DRAM_HIT,MEM_BOUND_STALLS.LOAD_L2_HIT,MEM_BOUND_STALLS.LOAD_LLC_HIT,MEM_SCHEDULER_BLOCK.ALL,MEM_SCHEDULER_BLOCK.ST_BUF,TOPDOWN_BE_BOUND.MEM_SCHEDULER,MEM_INST_RETIRED.ALL_STORES:sa=100003,MEM_INST_RETIRED.ALL_LOADS:sa=100003,CYCLE_ACTIVITY.CYCLES_MEM_ANY,DTLB_LOAD_MISSES.STLB_HIT:cmask=1,DTLB_LOAD_MISSES.WALK_ACTIVE,DTLB_LOAD_MISSES.WALK_COMPLETED_1G,DTLB_LOAD_MISSES.WALK_COMPLETED_2M_4M,DTLB_LOAD_MISSES.WALK_COMPLETED_4K,DTLB_STORE_MISSES.STLB_HIT:cmask=1,DTLB_STORE_MISSES.WALK_ACTIVE,DTLB_STORE_MISSES.WALK_COMPLETED_1G,DTLB_STORE_MISSES.WALK_COMPLETED_2M_4M,DTLB_STORE_MISSES.WALK_COMPLETED_4K,EXE_ACTIVITY.BOUND_ON_STORES,L1D_PEND_MISS.FB_FULL,L1D_PEND_MISS.L2_STALLS,L1D_PEND_MISS.PENDING,L2_RQSTS.ALL_RFO,L2_RQSTS.RFO_HIT,LD_BLOCKS.NO_SR,LD_BLOCKS.STORE_FORWARD,MEMORY_ACTIVITY.CYCLES_L1D_MISS,MEM_INST_RETIRED.LOCK_LOADS,MEM_INST_RETIRED.SPLIT_LOADS,MEM_INST_RETIRED.SPLIT_STORES,MEM_INST_RETIRED.STLB_MISS_LOADS,MEM_INST_RETIRED.STLB_MISS_STORES,MEM_LOAD_COMPLETED.L1_MISS_ANY,MEM_LOAD_L3_HIT_RETIRED.XSNP_FWD,MEM_LOAD_L3_HIT_RETIRED.XSNP_MISS,MEM_LOAD_L3_HIT_RETIRED.XSNP_NO_FWD,MEM_LOAD_RETIRED.FB_HIT,MEM_LOAD_RETIRED.L1_MISS,MEM_STORE_RETIRED.L2_HIT,OFFCORE_REQUESTS_OUTSTANDING.ALL_DATA_RD:cmask=4,OFFCORE_REQUESTS_OUTSTANDING.CYCLES_WITH_DATA_RD,OFFCORE_REQUESTS_OUTSTANDING.CYCLES_WITH_DEMAND_RFO,XQ.FULL_CYCLES,LD_HEAD.DTLB_MISS_AT_RET,LD_HEAD.OTHER_AT_RET,LD_HEAD.PGWALK_AT_RET,LD_HEAD.ST_ADDR_AT_RET,UNC_M_CAS_COUNT_RD,UNC_M_CAS_COUNT_WR -experimental
+7013 [6488] INFO perfrun.sdk <> - runCmd started PID 17072
+7105 [6488] INFO perfrun.sdk <> - runCmd: "C:\Program Files (x86)\Intel\oneAPI\vtune\2025.10\bin64\emon.exe" -u -t 0.010 -l0 -A -C CPU_CLK_UNHALTED.DISTRIBUTED,CPU_CLK_UNHALTED.REF_TSC,CPU_CLK_UNHALTED.THREAD,CPU_CLK_UNHALTED.THREAD_P,CYCLE_ACTIVITY.CYCLES_MEM_ANY,DTLB_LOAD_MISSES.STLB_HIT:c1,DTLB_LOAD_MISSES.WALK_ACTIVE,DTLB_LOAD_MISSES.WALK_COMPLETED_1G,DTLB_LOAD_MISSES.WALK_COMPLETED_2M_4M,DTLB_LOAD_MISSES.WALK_COMPLETED_4K,DTLB_STORE_MISSES.STLB_HIT:c1,DTLB_STORE_MISSES.WALK_ACTIVE,DTLB_STORE_MISSES.WALK_COMPLETED_1G,DTLB_STORE_MISSES.WALK_COMPLETED_2M_4M,DTLB_STORE_MISSES.WALK_COMPLETED_4K,EXE_ACTIVITY.BOUND_ON_LOADS,EXE_ACTIVITY.BOUND_ON_STORES,FP_ARITH_INST_RETIRED.128B_PACKED_DOUBLE,FP_ARITH_INST_RETIRED.128B_PACKED_SINGLE,FP_ARITH_INST_RETIRED.256B_PACKED_DOUBLE,FP_ARITH_INST_RETIRED.256B_PACKED_SINGLE,FP_ARITH_INST_RETIRED.SCALAR_DOUBLE,FP_ARITH_INST_RETIRED.SCALAR_SINGLE,FRONTEND_RETIRED.LATENCY_GE_4,IDQ_BUBBLES.CORE,INST_RETIRED.ANY,INT_MISC.UOP_DROPPING,L1D_PEND_MISS.FB_FULL,L1D_PEND_MISS.L2_STALLS,L1D_PEND_MISS.PENDING,L2_RQSTS.ALL_RFO,L2_RQSTS.RFO_HIT,LD_BLOCKS.NO_SR,LD_BLOCKS.STORE_FORWARD,LD_HEAD.ANY_AT_RET,LD_HEAD.DTLB_MISS_AT_RET,LD_HEAD.L1_BOUND_AT_RET,LD_HEAD.L1_MISS_AT_RET,LD_HEAD.OTHER_AT_RET,LD_HEAD.PGWALK_AT_RET,LD_HEAD.ST_ADDR_AT_RET,MEMORY_ACTIVITY.CYCLES_L1D_MISS,MEMORY_ACTIVITY.STALLS_L1D_MISS,MEMORY_ACTIVITY.STALLS_L2_MISS,MEMORY_ACTIVITY.STALLS_L3_MISS,MEM_BOUND_STALLS.LOAD,MEM_BOUND_STALLS.LOAD_DRAM_HIT,MEM_BOUND_STALLS.LOAD_L2_HIT,MEM_BOUND_STALLS.LOAD_LLC_HIT,MEM_INST_RETIRED.ALL_LOADS,MEM_INST_RETIRED.ALL_STORES,MEM_INST_RETIRED.LOCK_LOADS,MEM_INST_RETIRED.SPLIT_LOADS,MEM_INST_RETIRED.SPLIT_STORES,MEM_INST_RETIRED.STLB_MISS_LOADS,MEM_INST_RETIRED.STLB_MISS_STORES,MEM_LOAD_COMPLETED.L1_MISS_ANY,MEM_LOAD_L3_HIT_RETIRED.XSNP_FWD,MEM_LOAD_L3_HIT_RETIRED.XSNP_MISS,MEM_LOAD_L3_HIT_RETIRED.XSNP_NO_FWD,MEM_LOAD_RETIRED.FB_HIT,MEM_LOAD_RETIRED.L1_HIT,MEM_LOAD_RETIRED.L1_MISS,MEM_LOAD_RETIRED.L2_HIT,MEM_LOAD_RETIRED.L3_HIT,MEM_LOAD_RETIRED.L3_MISS,MEM_SCHEDULER_BLOCK.ALL,MEM_SCHEDULER_BLOCK.ST_BUF,MEM_STORE_RETIRED.L2_HIT,OFFCORE_REQUESTS_OUTSTANDING.ALL_DATA_RD:c4,OFFCORE_REQUESTS_OUTSTANDING.CYCLES_WITH_DATA_RD,OFFCORE_REQUESTS_OUTSTANDING.CYCLES_WITH_DEMAND_RFO,TOPDOWN.BACKEND_BOUND_SLOTS,TOPDOWN.MEMORY_BOUND_SLOTS,TOPDOWN.SLOTS,TOPDOWN.SLOTS_P,TOPDOWN_BE_BOUND.ALL,TOPDOWN_BE_BOUND.MEM_SCHEDULER,TOPDOWN_FE_BOUND.ALL,TOPDOWN_RETIRING.ALL,TOPDOWN_RETIRING.ALL_P,UNC_M_CAS_COUNT_RD,UNC_M_CAS_COUNT_WR,UOPS_EXECUTED.THREAD,UOPS_EXECUTED.X87,UOPS_RETIRED.SLOTS,XQ.FULL_CYCLES -f "C:\cpp-gametechlab-project-w05\build\Intel® VTune™ Profiler Results\VerstappenEngine\r000ps\data.0\emon.0.emon" -experimental
+7108 [6488] INFO perfrun.sdk <> - runCmd started PID 32364
+7108 [6488] INFO perfrun.emon <> - Waiting trace file creation: C:\cpp-gametechlab-project-w05\build\Intel® VTune™ Profiler Results\VerstappenEngine\r000ps\data.0\emon.0.emon
+7315 [6488] INFO perfrun.emon <> - trace file was found
+7315 [18020] INFO perfrun.launcher <> - Launcher: all plugins were started
+7315 [18020] INFO perfrun.launcher <> - DirectoryMonitor object was created
+7315 [18020] INFO perfrun.launcher <> - DirectoryMonitor: a callback was added
+7315 [18020] INFO perfrun.launcher <> - DirectoryMonitor was started with pingTime = 1000
+7315 [18020] INFO perfrun.launcher <> - DeadlineTimer is going to be constructed
+7315 [18020] INFO perfrun.launcher <> - DeadlineTimer: a callback was added
+7324 [18020] INFO perfrun.launcher <> - Launcher: resume the profiled application and  wait its termination or stop command
+27874 [35080] INFO perfrun.launcher <> - Stopping collection by RPC request
+27879 [6488] INFO perfrun.sdk <> - runCmd: "C:\Program Files (x86)\Intel\oneAPI\vtune\2025.10\bin64\emon.exe" -stop
+27881 [6488] INFO perfrun.sdk <> - runCmd started PID 5260
+28089 [6488] INFO perfrun.emon <> - EMON collector successfully stopped.
+
+28090 [6488] INFO perfrun.emon <> - Waiting for main Emon process (32364) to finish...
+28136 [6488] INFO perfrun.emon <> - Main Emon process finished
+28136 [6488] INFO perfrun.sdk <> - De-allocating TMU: C:\cpp-gametechlab-project-w05\build\Intel® VTune™ Profiler Results\VerstappenEngine\r000ps\data.0\systemcollector-25040-DESKTOP-UFL5EJM.sc
+28152 [6488] INFO perfrun.system <> - closed the system trace file: C:\cpp-gametechlab-project-w05\build\Intel® VTune™ Profiler Results\VerstappenEngine\r000ps\data.0\systemcollector-25040-DESKTOP-UFL5EJM.sc
+28564 [18020] WARN perfrun.sdk <> - Unexpected exit status - -1073741510, at file: vcs\perfrun1\sdk\src\utils_win.cpp:544
+28564 [18020] INFO perfrun.launcher <> - Launcher: the profiled application was terminated  with exit code = -1073741510
+28564 [18020] INFO perfrun.launcher <> - Launcher: all plugins were stopped.
+28564 [18020] INFO perfrun.launcher <> - DeadlineTimer is going to be destroyed
+28564 [18020] INFO perfrun.launcher <> - DeadlineTimer was destroyed
+28564 [18020] INFO perfrun.launcher <> - DirectoryMonitor object was destroyed
+28564 [18020] WARN perfrun.launcher <> - Stop command is ignored because it is received when collection is already stopped, at file: vcs\perfrun1\launcher\src\command_handler.cpp:226
+28565 [18020] INFO perfrun.launcher <> - Application exit code: -1073741510
+28565 [18020] INFO perfrun.launcher <> - Exit code: 4
