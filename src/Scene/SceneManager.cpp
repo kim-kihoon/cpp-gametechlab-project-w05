@@ -64,6 +64,7 @@ namespace Scene
 
         // 3. 기타 메타데이터
         SceneData->MeshIDs[ObjectIndex] = InRequest.MeshID;
+        SceneData->BaseMeshIDs[ObjectIndex] = InRequest.MeshID;
         SceneData->MaterialIDs[ObjectIndex] = InRequest.MaterialID;
         SceneData->IsVisible[ObjectIndex] = true;
 

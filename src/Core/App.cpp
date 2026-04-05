@@ -298,21 +298,8 @@ void UApp::UniformCullingAndRenderCollect()
         Math::FFrustum CameraFrustum;
         CameraFrustum.Update(View, Proj);
 
-        Scene::FSceneDataSOA* SceneData = SceneManager->GetSceneData();
-        SceneData->ResetRenderQueue();
-        SceneData->IsVisible.fill(false);
-
-        SceneManager->GetGrid()->QueryFrustum(
-            CameraFrustum,
-            SceneData->RenderQueue.data(),
-            SceneData->RenderCount,
-            Scene::FSceneDataSOA::MAX_OBJECTS
-        );
-
-        for (uint32_t QueueIndex = 0; QueueIndex < SceneData->RenderCount; ++QueueIndex)
-        {
-            SceneData->IsVisible[SceneData->RenderQueue[QueueIndex]] = true;
-        }
+        // 최적화된 AVX2 컬링 및 LOD(MeshID) 빌드 함수 호출
+        SceneManager->GetGrid()->CullingAndBuildRenderQueue(CameraFrustum, DirectX::XMLoadFloat3(&CameraState.Position));
     }
 }
 

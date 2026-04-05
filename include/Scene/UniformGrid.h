@@ -51,6 +51,8 @@ namespace Scene
 
         template <typename NarrowPhaseFunc>
         bool Raycast(const Math::FRay& Ray, float MaxDistance, uint32_t& OutHitIndex, float& OutHitDistance, NarrowPhaseFunc NarrowPhaseTest);
+        /** [최적화] 프러스텀 컬링, LOD(MeshID) 갱신, 렌더 큐 빌드를 한 번에 수행 */
+        void CullingAndBuildRenderQueue(const Math::FFrustum& Frustum, const Math::FVector& CameraPos);
     };
 
     template <typename NarrowPhaseFunc>
