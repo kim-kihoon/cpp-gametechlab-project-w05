@@ -965,7 +965,7 @@ namespace Graphics
         Context->CSSetShader(nullptr, nullptr, 0);
     }
 
-    void URenderer::RunOcclusionCull(Scene::FSceneDataSOA* SceneData, const DirectX::XMMATRIX& ViewProj)
+    void URenderer::RunOcclusionCull(Scene::FSceneDataSOA* SceneData, const DirectX::XMMATRIX& ViewProj, std::array<bool, Scene::FSceneDataSOA::MAX_OBJECTS>& OutIsVisible)
     {
         const uint32_t Count = SceneData->RenderCount;
         if (Count == 0) return;
@@ -1044,6 +1044,9 @@ namespace Graphics
         if (bFirstFrame)
         {
             bFirstFrame = false;
+            // 첫 프레임은 전부 visible로 초기화
+            for (uint32_t i = 0; i < Count; ++i)
+                OutIsVisible[SceneData->RenderQueue[i]] = true;
             std::swap(StagingReadIndex, StagingWriteIndex);
             return;
         }
@@ -1057,18 +1060,16 @@ namespace Graphics
             return;
         }
 
+        // ── 기존 압축 루프 전체를 교체 ───────────────────────────────────────────
         const uint32_t* flags = static_cast<const uint32_t*>(mr.pData);
 
-        uint32_t newCount = 0;
+        // RenderCount 압축 안 함, OutIsVisible에만 반영
         for (uint32_t i = 0; i < Count; ++i)
         {
             const uint32_t oid = SceneData->RenderQueue[i];
-            const bool     visible = (flags[oid] != 0);
-            SceneData->IsVisible[oid] = visible;
-            if (visible)
-                SceneData->RenderQueue[newCount++] = oid;
+            if (flags[oid] != 0)
+                OutIsVisible[oid] = true;  // invisible → visible 승격
         }
-        SceneData->RenderCount = newCount;
 
         Context->Unmap(VisibilityStagingBuffers[StagingReadIndex].Get(), 0);
         std::swap(StagingReadIndex, StagingWriteIndex);
@@ -1095,7 +1096,10 @@ namespace Graphics
         if (!SceneData || !PerFrameBuffer || !PerObjectBuffer || !MaterialBuffer) return;
         if (SceneData->RenderCount == 0) return;
 
-        // ── ViewProj 먼저 계산 (Cull에도 필요) ──────────────────────────────────
+        const uint32_t AlignedConstantSize = 256;
+        const uint32_t BufferCapacity = 64 * 1024 * 1024;
+
+        // ── ViewProj 계산 ─────────────────────────────────────────────────────────
         const float aspect = (ViewportHeight == 0)
             ? 1.0f : static_cast<float>(ViewportWidth) / static_cast<float>(ViewportHeight);
 
@@ -1106,29 +1110,12 @@ namespace Graphics
             std::sin(CameraState.PitchRadians), 0.0f));
 
         const DirectX::XMMATRIX view = DirectX::XMMatrixLookAtLH(
-            camPos,
-            DirectX::XMVectorAdd(camPos, forward),
+            camPos, DirectX::XMVectorAdd(camPos, forward),
             DirectX::XMVectorSet(0, 0, 1, 0));
         const DirectX::XMMATRIX proj = DirectX::XMMatrixPerspectiveFovLH(
             DirectX::XMConvertToRadians(CameraState.FOVDegrees),
             aspect, CameraState.NearClip, CameraState.FarClip);
         const DirectX::XMMATRIX viewProj = view * proj;
-
-        const uint32_t AlignedConstantSize = 256;
-        const uint32_t BufferCapacity = 64 * 1024 * 1024;
-
-        auto t0 = std::chrono::high_resolution_clock::now();
-        // ── Pass 1: Depth Prepass ────────────────────────────────────────────────
-        Context->ClearDepthStencilView(DepthStencilView.Get(), D3D11_CLEAR_DEPTH, 1.0f, 0);
-        ID3D11RenderTargetView* nullRTV = nullptr;
-        Context->OMSetRenderTargets(0, &nullRTV, DepthStencilView.Get());
-        Context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-        Context->IASetInputLayout(InputLayout.Get());
-        Context->VSSetShader(VertexShader.Get(), nullptr, 0);
-        Context->PSSetShader(nullptr, nullptr, 0);
-        Context->VSSetConstantBuffers(0, 1, PerFrameBuffer.GetAddressOf());
-        Context->RSSetState(DefaultRasterizerState.Get());
-        Context->OMSetDepthStencilState(DefaultDepthStencilState.Get(), 0);
 
         // PerFrameBuffer 업데이트
         {
@@ -1142,104 +1129,140 @@ namespace Graphics
             }
         }
 
-        // 링버퍼 방식으로 일괄 Map/Unmap
-        const uint32_t PrepassCount = SceneData->RenderCount;
-        const uint32_t PrepassBulk = PrepassCount * AlignedConstantSize;
+        const uint32_t TotalCount = SceneData->RenderCount;
 
-        D3D11_MAP PrepassMapType = D3D11_MAP_WRITE_NO_OVERWRITE;
-        if (PerObjectRingBufferOffset + PrepassBulk > BufferCapacity)
-        {
-            PrepassMapType = D3D11_MAP_WRITE_DISCARD;
-            PerObjectRingBufferOffset = 0;
-        }
+        auto t0 = std::chrono::high_resolution_clock::now();
+        // ── 이전 프레임 결과로 Visible/Invisible 분리 ────────────────────────────
+        static uint32_t PrevVisibleQueue[Scene::FSceneDataSOA::MAX_OBJECTS];
+        static uint32_t PrevInvisibleQueue[Scene::FSceneDataSOA::MAX_OBJECTS];
+        uint32_t PrevVisibleCount = 0;
+        uint32_t PrevInvisibleCount = 0;
 
-        D3D11_MAPPED_SUBRESOURCE PrepassMap = {};
-        if (FAILED(Context->Map(PerObjectBuffer.Get(), 0, PrepassMapType, 0, &PrepassMap))) return;
-
-        uint8_t* PrepassDest = static_cast<uint8_t*>(PrepassMap.pData) + PerObjectRingBufferOffset;
-
-        for (uint32_t i = 0; i < PrepassCount; ++i)
+        for (uint32_t i = 0; i < TotalCount; ++i)
         {
             const uint32_t oid = SceneData->RenderQueue[i];
-            const Math::FPacked3x4Matrix& mat = SceneData->WorldMatrices[oid];
-            FPerObjectConstants* dest = reinterpret_cast<FPerObjectConstants*>(
-                PrepassDest + i * AlignedConstantSize);
-            DirectX::XMStoreFloat4(&dest->Row0, mat.Row0);
-            DirectX::XMStoreFloat4(&dest->Row1, mat.Row1);
-            DirectX::XMStoreFloat4(&dest->Row2, mat.Row2);
-            dest->ColorModifier = { 0, 0, 0, 0 };
-        }
-        Context->Unmap(PerObjectBuffer.Get(), 0);
-
-        const uint32_t PrepassBase = PerObjectRingBufferOffset;
-        PerObjectRingBufferOffset += PrepassBulk;
-
-        // Draw
-        for (uint32_t i = 0; i < PrepassCount; ++i)
-        {
-            const uint32_t oid = SceneData->RenderQueue[i];
-            const uint32_t mid = SceneData->MeshIDs[oid];
-            if (mid >= MAX_MESH_TYPES) continue;
-
-            const FMeshResource& res = MeshResources[mid];
-            if (!res.VertexBuffer || !res.IndexBuffer) continue;
-
-            if (Context1)
-            {
-                UINT off = (PrepassBase + i * AlignedConstantSize) / 16;
-                UINT cnt = AlignedConstantSize / 16;
-                Context1->VSSetConstantBuffers1(1, 1, PerObjectBuffer.GetAddressOf(), &off, &cnt);
-            }
+            if (!bHasPrevFrame || PrevIsVisible[oid])
+                PrevVisibleQueue[PrevVisibleCount++] = oid;
             else
-            {
-                Context->VSSetConstantBuffers(1, 1, PerObjectBuffer.GetAddressOf());
-            }
-
-            UINT stride = sizeof(FMeshVertex), offset = 0;
-            Context->IASetVertexBuffers(0, 1, res.VertexBuffer.GetAddressOf(), &stride, &offset);
-            Context->IASetIndexBuffer(res.IndexBuffer.Get(), DXGI_FORMAT_R32_UINT, 0);
-            Context->DrawIndexed(res.IndexCount, 0, 0);
+                PrevInvisibleQueue[PrevInvisibleCount++] = oid;
         }
-
-        // ── Hi-Z 빌드 ────────────────────────────────────────────────────────────
-        ID3D11DepthStencilView* nullDSV = nullptr;
-        Context->OMSetRenderTargets(0, &nullRTV, nullDSV);  // DSV 해제
 
         auto t1 = std::chrono::high_resolution_clock::now();
-        BuildHiZMips();
-        auto t2 = std::chrono::high_resolution_clock::now();
+        // ── Pass 1: PrevVisible Depth Prepass ────────────────────────────────────
+        {
+            Context->ClearDepthStencilView(DepthStencilView.Get(), D3D11_CLEAR_DEPTH, 1.0f, 0);
+            ID3D11RenderTargetView* nullRTV = nullptr;
+            Context->OMSetRenderTargets(0, &nullRTV, DepthStencilView.Get());
+            Context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+            Context->IASetInputLayout(InputLayout.Get());
+            Context->VSSetShader(VertexShader.Get(), nullptr, 0);
+            Context->PSSetShader(nullptr, nullptr, 0);
+            Context->VSSetConstantBuffers(0, 1, PerFrameBuffer.GetAddressOf());
+            Context->RSSetState(DefaultRasterizerState.Get());
+            Context->OMSetDepthStencilState(DefaultDepthStencilState.Get(), 0);
 
-        // ── Occlusion Cull ───────────────────────────────────────────────────────
-        RunOcclusionCull(SceneData, viewProj);
+            const uint32_t Bulk = PrevVisibleCount * AlignedConstantSize;
+            D3D11_MAP MapType = D3D11_MAP_WRITE_NO_OVERWRITE;
+            if (PerObjectRingBufferOffset + Bulk > BufferCapacity)
+            {
+                MapType = D3D11_MAP_WRITE_DISCARD;
+                PerObjectRingBufferOffset = 0;
+            }
+
+            D3D11_MAPPED_SUBRESOURCE pm = {};
+            if (FAILED(Context->Map(PerObjectBuffer.Get(), 0, MapType, 0, &pm))) return;
+
+            uint8_t* base = static_cast<uint8_t*>(pm.pData) + PerObjectRingBufferOffset;
+            for (uint32_t i = 0; i < PrevVisibleCount; ++i)
+            {
+                const uint32_t oid = PrevVisibleQueue[i];
+                const Math::FPacked3x4Matrix& mat = SceneData->WorldMatrices[oid];
+                FPerObjectConstants* dest = reinterpret_cast<FPerObjectConstants*>(
+                    base + i * AlignedConstantSize);
+                DirectX::XMStoreFloat4(&dest->Row0, mat.Row0);
+                DirectX::XMStoreFloat4(&dest->Row1, mat.Row1);
+                DirectX::XMStoreFloat4(&dest->Row2, mat.Row2);
+                dest->ColorModifier = { 0, 0, 0, 0 };
+            }
+            Context->Unmap(PerObjectBuffer.Get(), 0);
+
+            const uint32_t Pass1Base = PerObjectRingBufferOffset;
+            PerObjectRingBufferOffset += Bulk;
+
+            for (uint32_t i = 0; i < PrevVisibleCount; ++i)
+            {
+                const uint32_t oid = PrevVisibleQueue[i];
+                const uint32_t mid = SceneData->MeshIDs[oid];
+                if (mid >= MAX_MESH_TYPES) continue;
+                const FMeshResource& res = MeshResources[mid];
+                if (!res.VertexBuffer || !res.IndexBuffer) continue;
+
+                if (Context1)
+                {
+                    UINT off = (Pass1Base + i * AlignedConstantSize) / 16;
+                    UINT cnt = AlignedConstantSize / 16;
+                    Context1->VSSetConstantBuffers1(1, 1, PerObjectBuffer.GetAddressOf(), &off, &cnt);
+                }
+                UINT stride = sizeof(FMeshVertex), offset = 0;
+                Context->IASetVertexBuffers(0, 1, res.VertexBuffer.GetAddressOf(), &stride, &offset);
+                Context->IASetIndexBuffer(res.IndexBuffer.Get(), DXGI_FORMAT_R32_UINT, 0);
+                Context->DrawIndexed(res.IndexCount, 0, 0);
+            }
+        }
+
+        auto t2 = std::chrono::high_resolution_clock::now();
+        // ── Hi-Z 빌드 ────────────────────────────────────────────────────────────
+        BuildHiZMips();
         auto t3 = std::chrono::high_resolution_clock::now();
 
-        // ── Pass 2: 최종 렌더 (visible만) ────────────────────────────────────────
-        const uint32_t SourceCount = SceneData->RenderCount;
-        CurrentMetrics.RenderedObjectCount = SourceCount;
-        if (SourceCount == 0) return;
+        // ── PrevInvisible을 비동기 Cull에 넣기 ───────────────────────────────────
+        // 전체 오브젝트를 한번에 테스트
+        for (uint32_t i = 0; i < TotalCount; ++i)
+            SceneData->RenderQueue[i] = SceneData->RenderQueue[i]; // 그대로 유지
+        SceneData->RenderCount = TotalCount;
 
-        const uint32_t BulkSize = SourceCount * AlignedConstantSize;
+        // PrevIsVisible 초기화
+        std::fill(PrevIsVisible.begin(), PrevIsVisible.end(), false);
+        RunOcclusionCull(SceneData, viewProj, PrevIsVisible);
+        bHasPrevFrame = true;
 
-        D3D11_MAP MapType = D3D11_MAP_WRITE_NO_OVERWRITE;
-        if (PerObjectRingBufferOffset + BulkSize > BufferCapacity)
+        auto t4 = std::chrono::high_resolution_clock::now();
+
+        // ── 최종 렌더 (PrevVisible만) ─────────────────────────────────────────────
+        const uint32_t FinalCount = PrevVisibleCount;
+
+        Context->OMSetRenderTargets(1, MainRenderTargetView.GetAddressOf(), DepthStencilView.Get());
+        Context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+        Context->IASetInputLayout(InputLayout.Get());
+        Context->VSSetShader(VertexShader.Get(), nullptr, 0);
+        Context->PSSetShader(PixelShader.Get(), nullptr, 0);
+        Context->VSSetConstantBuffers(0, 1, PerFrameBuffer.GetAddressOf());
+        Context->PSSetConstantBuffers(0, 1, PerFrameBuffer.GetAddressOf());
+        Context->PSSetSamplers(0, 1, DiffuseSamplerState.GetAddressOf());
+        Context->RSSetState(DefaultRasterizerState.Get());
+        Context->OMSetDepthStencilState(DefaultDepthStencilState.Get(), 0);
+
+        const uint32_t FinalBulk = FinalCount * AlignedConstantSize;
+        D3D11_MAP FinalMapType = D3D11_MAP_WRITE_NO_OVERWRITE;
+        if (PerObjectRingBufferOffset + FinalBulk > BufferCapacity)
         {
-            MapType = D3D11_MAP_WRITE_DISCARD;
+            FinalMapType = D3D11_MAP_WRITE_DISCARD;
             PerObjectRingBufferOffset = 0;
         }
 
-        D3D11_MAPPED_SUBRESOURCE PerObjectMap = {};
-        if (FAILED(Context->Map(PerObjectBuffer.Get(), 0, MapType, 0, &PerObjectMap))) return;
+        D3D11_MAPPED_SUBRESOURCE FinalMap = {};
+        if (FAILED(Context->Map(PerObjectBuffer.Get(), 0, FinalMapType, 0, &FinalMap))) return;
 
-        uint8_t* DestStart = static_cast<uint8_t*>(PerObjectMap.pData) + PerObjectRingBufferOffset;
-        const uint32_t BaseFrameOffset = PerObjectRingBufferOffset;
+        uint8_t* FinalDest = static_cast<uint8_t*>(FinalMap.pData) + PerObjectRingBufferOffset;
+        const uint32_t FinalBase = PerObjectRingBufferOffset;
 
         static uint32_t SortedQueue[Scene::FSceneDataSOA::MAX_OBJECTS];
         uint32_t MeshCounts[MAX_MESH_TYPES] = {};
         uint32_t MeshOffsets[MAX_MESH_TYPES] = {};
 
-        for (uint32_t i = 0; i < SourceCount; ++i)
+        for (uint32_t i = 0; i < FinalCount; ++i)
         {
-            const uint32_t mid = SceneData->MeshIDs[SceneData->RenderQueue[i]];
+            const uint32_t mid = SceneData->MeshIDs[PrevVisibleQueue[i]];
             if (mid < MAX_MESH_TYPES) ++MeshCounts[mid];
         }
 
@@ -1253,9 +1276,9 @@ namespace Graphics
         uint32_t TempOffsets[MAX_MESH_TYPES];
         memcpy(TempOffsets, MeshOffsets, sizeof(MeshOffsets));
 
-        for (uint32_t i = 0; i < SourceCount; ++i)
+        for (uint32_t i = 0; i < FinalCount; ++i)
         {
-            const uint32_t oid = SceneData->RenderQueue[i];
+            const uint32_t oid = PrevVisibleQueue[i];
             const uint32_t mid = SceneData->MeshIDs[oid];
             if (mid >= MAX_MESH_TYPES) continue;
 
@@ -1264,8 +1287,7 @@ namespace Graphics
 
             const Math::FPacked3x4Matrix& mat = SceneData->WorldMatrices[oid];
             FPerObjectConstants* dest = reinterpret_cast<FPerObjectConstants*>(
-                DestStart + sidx * AlignedConstantSize);
-
+                FinalDest + sidx * AlignedConstantSize);
             DirectX::XMStoreFloat4(&dest->Row0, mat.Row0);
             DirectX::XMStoreFloat4(&dest->Row1, mat.Row1);
             DirectX::XMStoreFloat4(&dest->Row2, mat.Row2);
@@ -1274,20 +1296,7 @@ namespace Graphics
             : DirectX::XMFLOAT4{ 0.0f, 0.0f, 0.0f, 0.0f };
         }
         Context->Unmap(PerObjectBuffer.Get(), 0);
-        PerObjectRingBufferOffset += BulkSize;
-
-        // RTV 복원 후 최종 렌더
-        Context->OMSetRenderTargets(1, MainRenderTargetView.GetAddressOf(), DepthStencilView.Get());
-
-        Context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-        Context->IASetInputLayout(InputLayout.Get());
-        Context->VSSetShader(VertexShader.Get(), nullptr, 0);
-        Context->PSSetShader(PixelShader.Get(), nullptr, 0);
-        Context->VSSetConstantBuffers(0, 1, PerFrameBuffer.GetAddressOf());
-        Context->PSSetConstantBuffers(0, 1, PerFrameBuffer.GetAddressOf());
-        Context->PSSetSamplers(0, 1, DiffuseSamplerState.GetAddressOf());
-        Context->RSSetState(DefaultRasterizerState.Get());
-        Context->OMSetDepthStencilState(DefaultDepthStencilState.Get(), 0);
+        PerObjectRingBufferOffset += FinalBulk;
 
         for (uint32_t mid = 0; mid < MAX_MESH_TYPES; ++mid)
         {
@@ -1317,28 +1326,25 @@ namespace Graphics
             {
                 if (Context1)
                 {
-                    UINT off = (BaseFrameOffset + i * AlignedConstantSize) / 16;
+                    UINT off = (FinalBase + i * AlignedConstantSize) / 16;
                     UINT cnt = AlignedConstantSize / 16;
                     Context1->VSSetConstantBuffers1(1, 1, PerObjectBuffer.GetAddressOf(), &off, &cnt);
-                }
-                else
-                {
-                    Context->VSSetConstantBuffers(1, 1, PerObjectBuffer.GetAddressOf());
                 }
                 Context->DrawIndexed(res.IndexCount, 0, 0);
             }
         }
+        auto t5 = std::chrono::high_resolution_clock::now();
 
-        auto t4 = std::chrono::high_resolution_clock::now();
-
-        // CPU 시간 출력
         auto ms = [](auto a, auto b) {
             return std::chrono::duration<float, std::milli>(b - a).count();
             };
-
         char buf[256];
-        sprintf_s(buf, "Prepass=%.2fms  HiZ=%.2fms  Cull=%.2fms  Draw=%.2fms\n",
-            ms(t0, t1), ms(t1, t2), ms(t2, t3), ms(t3, t4));
+        sprintf_s(buf, "Split=%.2f  Prepass=%.2f  HiZ=%.2f  Cull=%.2f  Draw=%.2f\n",
+            ms(t0, t1), ms(t1, t2), ms(t2, t3), ms(t3, t4), ms(t4, t5));
+        OutputDebugStringA(buf);
+
+        sprintf_s(buf, "PrevVisible=%u  PrevInvisible=%u  Total=%u\n",
+            PrevVisibleCount, PrevInvisibleCount, TotalCount);
         OutputDebugStringA(buf);
     }
 

@@ -71,7 +71,8 @@ namespace Graphics
         void InitHiZResources(uint32_t Width, uint32_t Height);  // 추가
         void BuildHiZMips();                                      // 추가
         void RunOcclusionCull(Scene::FSceneDataSOA* SceneData,
-            const DirectX::XMMATRIX& ViewProj); // 추가
+            const DirectX::XMMATRIX& ViewProj,
+            std::array<bool, Scene::FSceneDataSOA::MAX_OBJECTS>& OutIsVisible);
 
     private:
         static constexpr uint32_t MAX_MESH_TYPES = 2;
@@ -132,5 +133,9 @@ namespace Graphics
         uint32_t HiZWidth = 0;
         uint32_t HiZHeight = 0;
         uint32_t HiZMipCount = 0;
+
+        // 이전 프레임 visibility 저장용
+        std::array<bool, Scene::FSceneDataSOA::MAX_OBJECTS> PrevIsVisible = {};
+        bool bHasPrevFrame = false;
     };
 }
