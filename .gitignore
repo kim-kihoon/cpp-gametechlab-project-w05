@@ -1,7 +1,6 @@
 # Visual Studio 관련
 .vs/
 out/
-build/
 x64/
 Debug/
 Release/
