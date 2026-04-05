@@ -89,7 +89,9 @@ namespace Graphics
             std::array<bool, Scene::FSceneDataSOA::MAX_OBJECTS>& OutIsVisible);
 
     private:
-        static constexpr uint32_t MAX_MESH_TYPES = 2;   
+        static constexpr uint32_t MAX_MESH_TYPES = 2;
+        static constexpr uint32_t BILLBOARD_MESH_ID_OFFSET = 10;
+        static constexpr uint32_t RENDER_BUCKET_COUNT = MAX_MESH_TYPES * 2;
 
         ComPtr<ID3D11Device> Device;
         ComPtr<ID3D11DeviceContext> Context;

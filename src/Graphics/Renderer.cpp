@@ -398,6 +398,12 @@ namespace Graphics
     // ============================================================================
     const URenderer::FMeshResource* URenderer::GetMeshResource(uint32_t MeshID) const
     {
+        if (MeshID >= BILLBOARD_MESH_ID_OFFSET &&
+            MeshID < BILLBOARD_MESH_ID_OFFSET + MAX_MESH_TYPES)
+        {
+            MeshID -= BILLBOARD_MESH_ID_OFFSET;
+        }
+
         if (MeshID < MAX_MESH_TYPES) return &MeshResources[MeshID];
         return nullptr;
     }
@@ -1350,30 +1356,54 @@ namespace Graphics
         const uint32_t FinalBase = PerObjectRingBufferOffset;
 
         static uint32_t SortedQueue[Scene::FSceneDataSOA::MAX_OBJECTS];
-        uint32_t MeshCounts[MAX_MESH_TYPES] = {};
-        uint32_t MeshOffsets[MAX_MESH_TYPES] = {};
+        std::array<uint32_t, RENDER_BUCKET_COUNT> MeshCounts = {};
+        std::array<uint32_t, RENDER_BUCKET_COUNT> MeshOffsets = {};
+
+        auto GetRenderBucketIndex = [&](uint32_t MeshID, uint32_t& OutBucketIndex) -> bool
+        {
+            if (MeshID < MAX_MESH_TYPES)
+            {
+                OutBucketIndex = MeshID;
+                return true;
+            }
+
+            if (MeshID >= BILLBOARD_MESH_ID_OFFSET &&
+                MeshID < BILLBOARD_MESH_ID_OFFSET + MAX_MESH_TYPES)
+            {
+                OutBucketIndex = MAX_MESH_TYPES + (MeshID - BILLBOARD_MESH_ID_OFFSET);
+                return true;
+            }
+
+            return false;
+        };
 
         for (uint32_t i = 0; i < FinalCount; ++i)
         {
-            const uint32_t mid = SceneData->MeshIDs[PrevVisibleQueue[i]];
-            if (mid < MAX_MESH_TYPES) ++MeshCounts[mid];
+            uint32_t BucketIndex = 0;
+            if (GetRenderBucketIndex(SceneData->MeshIDs[PrevVisibleQueue[i]], BucketIndex))
+            {
+                ++MeshCounts[BucketIndex];
+            }
         }
 
         {
             uint32_t cur = 0;
-            for (uint32_t i = 0; i < MAX_MESH_TYPES; ++i) { MeshOffsets[i] = cur; cur += MeshCounts[i]; }
+            for (uint32_t i = 0; i < RENDER_BUCKET_COUNT; ++i)
+            {
+                MeshOffsets[i] = cur;
+                cur += MeshCounts[i];
+            }
         }
 
-        uint32_t TempOffsets[MAX_MESH_TYPES];
-        memcpy(TempOffsets, MeshOffsets, sizeof(MeshOffsets));
+        std::array<uint32_t, RENDER_BUCKET_COUNT> TempOffsets = MeshOffsets;
 
         for (uint32_t i = 0; i < FinalCount; ++i)
         {
             const uint32_t oid = PrevVisibleQueue[i];
-            const uint32_t mid = SceneData->MeshIDs[oid];
-            if (mid >= MAX_MESH_TYPES) continue;
+            uint32_t BucketIndex = 0;
+            if (!GetRenderBucketIndex(SceneData->MeshIDs[oid], BucketIndex)) continue;
 
-            const uint32_t sidx = TempOffsets[mid]++;
+            const uint32_t sidx = TempOffsets[BucketIndex]++;
             SortedQueue[sidx] = oid;
 
             const Math::FPacked3x4Matrix& mat = SceneData->WorldMatrices[oid];
@@ -1435,18 +1465,18 @@ namespace Graphics
         Context->VSSetShader(BillboardVS.Get(), nullptr, 0);
         Context->PSSetShader(BillboardPS.Get(), nullptr, 0);
 
-        for (uint32_t mid = 0; mid < 2; ++mid)
+        for (uint32_t mid = 0; mid < MAX_MESH_TYPES; ++mid)
         {
             if (!ImpostorResources[mid].bIsBaked) continue;
-            const uint32_t bid = mid + 10;
-            if (MeshCounts[bid] == 0) continue;
+            const uint32_t BucketIndex = MAX_MESH_TYPES + mid;
+            if (MeshCounts[BucketIndex] == 0) continue;
 
             Context->PSSetShaderResources(0, 1, ImpostorResources[mid].SnapshotSRV.GetAddressOf());
             UINT stride = sizeof(FBillboardVertex), offset = 0;
             Context->IASetVertexBuffers(0, 1, BillboardVB.GetAddressOf(), &stride, &offset);
             Context->IASetIndexBuffer(BillboardIB.Get(), DXGI_FORMAT_R32_UINT, 0);
 
-            for (uint32_t i = MeshOffsets[bid]; i < MeshOffsets[bid] + MeshCounts[bid]; ++i)
+            for (uint32_t i = MeshOffsets[BucketIndex]; i < MeshOffsets[BucketIndex] + MeshCounts[BucketIndex]; ++i)
             {
                 if (Context1)
                 {

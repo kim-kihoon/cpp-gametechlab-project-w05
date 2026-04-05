@@ -1,0 +1,10 @@
+^C:\USERS\JUNGLE\HB\SOURCE\REPOS\W5\OUT\BUILD\CMAKEFILES\335C1F3E59F0C3638603B8063C9D81D7\GENERATE.STAMP.RULE
+setlocal
+"C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin\cmake.exe" -SC:/Users/jungle/HB/source/repos/W5 -BC:/Users/jungle/HB/source/repos/W5/out/build --check-stamp-list CMakeFiles/generate.stamp.list --vs-solution-file C:/Users/jungle/HB/source/repos/W5/out/build/cpp-gametechlab-project-w05.sln
+if %errorlevel% neq 0 goto :cmEnd
+:cmEnd
+endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone
+:cmErrorLevel
+exit /b %1
+:cmDone
+if %errorlevel% neq 0 goto :VCEnd

@@ -9,7 +9,20 @@ namespace Scene
     namespace
     {
         // 사과의 기본 반경 (필요 시 메시 데이터로부터 자동 계산하도록 확장 가능)
-        constexpr float DEFAULT_HALF_EXTENT = 0.5f; 
+        constexpr float DEFAULT_HALF_EXTENT = 0.5f;
+        constexpr uint32_t MAX_BASE_MESH_TYPES = 2;
+        constexpr uint32_t BILLBOARD_MESH_ID_OFFSET = 10;
+
+        uint32_t NormalizeBaseMeshID(uint32_t InMeshID)
+        {
+            if (InMeshID >= BILLBOARD_MESH_ID_OFFSET &&
+                InMeshID < BILLBOARD_MESH_ID_OFFSET + MAX_BASE_MESH_TYPES)
+            {
+                InMeshID -= BILLBOARD_MESH_ID_OFFSET;
+            }
+
+            return (InMeshID < MAX_BASE_MESH_TYPES) ? InMeshID : 0u;
+        }
     }
 
     USceneManager::USceneManager() {}
@@ -31,10 +44,11 @@ namespace Scene
         // 여기서는 매 프레임 루프를 도는 행위를 금지함.
     }
 
-    void USceneManager::ResetScene()
+	void USceneManager::ResetScene()
     {
 		if (!SceneData) return;
 
+		SceneData->TotalObjectCount = 0;
 		SceneData->ResetRenderQueue();
 		SceneData->IsVisible.fill(false);
 		ResetSelectionState();
@@ -132,7 +146,7 @@ namespace Scene
         File.write(reinterpret_cast<const char*>(SceneData->MaxY.data()), sizeof(float) * Count);
         File.write(reinterpret_cast<const char*>(SceneData->MaxZ.data()), sizeof(float) * Count);
         File.write(reinterpret_cast<const char*>(SceneData->WorldMatrices.data()), sizeof(FPacked3x4Matrix) * Count);
-        File.write(reinterpret_cast<const char*>(SceneData->MeshIDs.data()), sizeof(uint32_t) * Count);
+        File.write(reinterpret_cast<const char*>(SceneData->BaseMeshIDs.data()), sizeof(uint32_t) * Count);
         File.write(reinterpret_cast<const char*>(SceneData->MaterialIDs.data()), sizeof(uint32_t) * Count);
 
         return File.good();
@@ -161,6 +175,13 @@ namespace Scene
         File.read(reinterpret_cast<char*>(SceneData->WorldMatrices.data()), sizeof(FPacked3x4Matrix) * Count);
         File.read(reinterpret_cast<char*>(SceneData->MeshIDs.data()), sizeof(uint32_t) * Count);
         File.read(reinterpret_cast<char*>(SceneData->MaterialIDs.data()), sizeof(uint32_t) * Count);
+
+        for (uint32_t ObjectIndex = 0; ObjectIndex < Count; ++ObjectIndex)
+        {
+            const uint32_t BaseMeshID = NormalizeBaseMeshID(SceneData->MeshIDs[ObjectIndex]);
+            SceneData->MeshIDs[ObjectIndex] = BaseMeshID;
+            SceneData->BaseMeshIDs[ObjectIndex] = BaseMeshID;
+        }
 
         SceneData->TotalObjectCount = Count;
         if (Grid) Grid->BuildGrid();
