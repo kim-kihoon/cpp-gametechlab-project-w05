@@ -16,6 +16,7 @@ namespace Core
     {
         float DeltaTimeSeconds = 0.0f;
         float FramesPerSecond = 0.0f;
+        float AverageFPS = 0.0f; // 추가된 멤버
         
         // Picking 관련 정밀 계측 (Cycles 단위)
         uint64_t LastPickingCycles = 0;
