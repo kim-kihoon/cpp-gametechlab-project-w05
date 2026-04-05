@@ -15,135 +15,122 @@
 
 namespace
 {
-    constexpr float MAX_PITCH_RADIANS = 1.55334306f;
+constexpr float MAX_PITCH_RADIANS = 1.55334306f;
 
-    DirectX::XMVECTOR BuildCameraForward(const Graphics::FCameraState& InCameraState)
-    {
-        const float CosPitch = std::cos(InCameraState.PitchRadians);
-        const float SinPitch = std::sin(InCameraState.PitchRadians);
-        const float CosYaw = std::cos(InCameraState.YawRadians);
-        const float SinYaw = std::sin(InCameraState.YawRadians);
+DirectX::XMVECTOR BuildCameraForward(const Graphics::FCameraState& InCameraState)
+{
+    const float CosPitch = std::cos(InCameraState.PitchRadians);
+    const float SinPitch = std::sin(InCameraState.PitchRadians);
+    const float CosYaw = std::cos(InCameraState.YawRadians);
+    const float SinYaw = std::sin(InCameraState.YawRadians);
 
-        return DirectX::XMVector3Normalize(DirectX::XMVectorSet(
-            CosPitch * CosYaw,
-            CosPitch * SinYaw,
-            SinPitch,
-            0.0f));
-    }
-
-    Math::FMatrix BuildCameraViewProjection(const Graphics::FCameraState& InCameraState, int InViewportWidth, int InViewportHeight)
-    {
-        const float AspectRatio = (InViewportHeight == 0) ? 1.0f : static_cast<float>(InViewportWidth) / static_cast<float>(InViewportHeight);
-        const DirectX::XMVECTOR CameraPosition = DirectX::XMLoadFloat3(&InCameraState.Position);
-        const DirectX::XMVECTOR Forward = BuildCameraForward(InCameraState);
-        const DirectX::XMVECTOR WorldUp = DirectX::XMVectorSet(0.0f, 0.0f, 1.0f, 0.0f);
-        const DirectX::XMVECTOR CameraTarget = DirectX::XMVectorAdd(CameraPosition, Forward);
-
-        const DirectX::XMMATRIX View = DirectX::XMMatrixLookAtLH(CameraPosition, CameraTarget, WorldUp);
-        const DirectX::XMMATRIX Projection = DirectX::XMMatrixPerspectiveFovLH(
-            DirectX::XMConvertToRadians(InCameraState.FOVDegrees),
-            AspectRatio,
-            InCameraState.NearClip,
-            InCameraState.FarClip);
-        return View * Projection;
-    }
-
-    Math::FMatrix BuildCameraViewMatrix(const Graphics::FCameraState& InCameraState)
-    {
-        const DirectX::XMVECTOR CameraPosition = DirectX::XMLoadFloat3(&InCameraState.Position);
-        const DirectX::XMVECTOR Forward = BuildCameraForward(InCameraState);
-        const DirectX::XMVECTOR WorldUp = DirectX::XMVectorSet(0.0f, 0.0f, 1.0f, 0.0f);
-        const DirectX::XMVECTOR CameraTarget = DirectX::XMVectorAdd(CameraPosition, Forward);
-        return DirectX::XMMatrixLookAtLH(CameraPosition, CameraTarget, WorldUp);
-    }
-
-    Math::FMatrix BuildCameraProjectionMatrix(const Graphics::FCameraState& InCameraState, int InViewportWidth, int InViewportHeight)
-    {
-        const float AspectRatio = (InViewportHeight == 0) ? 1.0f : static_cast<float>(InViewportWidth) / static_cast<float>(InViewportHeight);
-        return DirectX::XMMatrixPerspectiveFovLH(
-            DirectX::XMConvertToRadians(InCameraState.FOVDegrees),
-            AspectRatio,
-            InCameraState.NearClip,
-            InCameraState.FarClip);
-    }
-
-    bool ComputeSceneBounds(const Scene::USceneManager& InSceneManager, Math::FBox& OutBounds)
-    {
-        const Scene::FSceneDataSOA* SceneData = InSceneManager.GetSceneData();
-        const uint32_t Count = InSceneManager.GetObjectCount();
-        if (!SceneData || Count == 0) return false;
-
-        float MinX = (std::numeric_limits<float>::max)();
-        float MinY = (std::numeric_limits<float>::max)();
-        float MinZ = (std::numeric_limits<float>::max)();
-        float MaxX = std::numeric_limits<float>::lowest();
-        float MaxY = std::numeric_limits<float>::lowest();
-        float MaxZ = std::numeric_limits<float>::lowest();
-
-        for (uint32_t Index = 0; Index < Count; ++Index)
-        {
-            MinX = (std::min)(MinX, SceneData->MinX[Index]);
-            MinY = (std::min)(MinY, SceneData->MinY[Index]);
-            MinZ = (std::min)(MinZ, SceneData->MinZ[Index]);
-            MaxX = (std::max)(MaxX, SceneData->MaxX[Index]);
-            MaxY = (std::max)(MaxY, SceneData->MaxY[Index]);
-            MaxZ = (std::max)(MaxZ, SceneData->MaxZ[Index]);
-        }
-
-        OutBounds.Min = { MinX, MinY, MinZ };
-        OutBounds.Max = { MaxX, MaxY, MaxZ };
-        return true;
-    }
-
-    void FitCameraToScene(const Scene::USceneManager& InSceneManager, Graphics::FCameraState& InOutCameraState, int InViewportWidth, int InViewportHeight)
-    {
-        Math::FBox SceneBounds = {};
-        if (!ComputeSceneBounds(InSceneManager, SceneBounds)) return;
-
-        const DirectX::XMFLOAT3 Center = {
-            (SceneBounds.Min.x + SceneBounds.Max.x) * 0.5f,
-            (SceneBounds.Min.y + SceneBounds.Max.y) * 0.5f,
-            (SceneBounds.Min.z + SceneBounds.Max.z) * 0.5f
-        };
-
-        const DirectX::XMFLOAT3 Extents = {
-            (SceneBounds.Max.x - SceneBounds.Min.x) * 0.5f,
-            (SceneBounds.Max.y - SceneBounds.Min.y) * 0.5f,
-            (SceneBounds.Max.z - SceneBounds.Min.z) * 0.5f
-        };
-
-        const float BoundingRadius = std::sqrt(
-            (Extents.x * Extents.x) +
-            (Extents.y * Extents.y) +
-            (Extents.z * Extents.z));
-
-        const float AspectRatio = (InViewportHeight == 0) ? 1.0f : static_cast<float>(InViewportWidth) / static_cast<float>(InViewportHeight);
-        const float VerticalHalfFov = DirectX::XMConvertToRadians(InOutCameraState.FOVDegrees) * 0.5f;
-        const float HorizontalHalfFov = std::atan(std::tan(VerticalHalfFov) * AspectRatio);
-        const float LimitingHalfFov = (std::min)(VerticalHalfFov, HorizontalHalfFov);
-        const float CameraDistance = (BoundingRadius / std::sin(LimitingHalfFov)) + 12.0f;
-
-        const DirectX::XMVECTOR Forward = DirectX::XMVector3Normalize(DirectX::XMVectorSet(1.0f, 1.0f, -0.5f, 0.0f));
-        const DirectX::XMVECTOR CenterVector = DirectX::XMLoadFloat3(&Center);
-        const DirectX::XMVECTOR CameraPosition = DirectX::XMVectorSubtract(CenterVector, DirectX::XMVectorScale(Forward, CameraDistance));
-
-        DirectX::XMStoreFloat3(&InOutCameraState.Position, CameraPosition);
-        InOutCameraState.YawRadians = std::atan2(DirectX::XMVectorGetY(Forward), DirectX::XMVectorGetX(Forward));
-        InOutCameraState.PitchRadians = std::atan2(
-            DirectX::XMVectorGetZ(Forward),
-            std::sqrt(
-                (DirectX::XMVectorGetX(Forward) * DirectX::XMVectorGetX(Forward)) +
-                (DirectX::XMVectorGetY(Forward) * DirectX::XMVectorGetY(Forward))));
-        InOutCameraState.FarClip = (std::max)(InOutCameraState.FarClip, CameraDistance + BoundingRadius + 16.0f);
-        InOutCameraState.NearClip = 0.1f;
-    }
+    return DirectX::XMVector3Normalize(DirectX::XMVectorSet(CosPitch * CosYaw, CosPitch * SinYaw, SinPitch, 0.0f));
 }
 
-UApp::UApp()
-    : WindowHandle(nullptr)
-    , InstanceHandle(nullptr)
-    , ScreenWidth(0)
-    , ScreenHeight(0)
+Math::FMatrix BuildCameraViewProjection(const Graphics::FCameraState& InCameraState, int InViewportWidth,
+                                        int InViewportHeight)
+{
+    const float AspectRatio =
+        (InViewportHeight == 0) ? 1.0f : static_cast<float>(InViewportWidth) / static_cast<float>(InViewportHeight);
+    const DirectX::XMVECTOR CameraPosition = DirectX::XMLoadFloat3(&InCameraState.Position);
+    const DirectX::XMVECTOR Forward = BuildCameraForward(InCameraState);
+    const DirectX::XMVECTOR WorldUp = DirectX::XMVectorSet(0.0f, 0.0f, 1.0f, 0.0f);
+    const DirectX::XMVECTOR CameraTarget = DirectX::XMVectorAdd(CameraPosition, Forward);
+
+    const DirectX::XMMATRIX View = DirectX::XMMatrixLookAtLH(CameraPosition, CameraTarget, WorldUp);
+    const DirectX::XMMATRIX Projection =
+        DirectX::XMMatrixPerspectiveFovLH(DirectX::XMConvertToRadians(InCameraState.FOVDegrees), AspectRatio,
+                                          InCameraState.NearClip, InCameraState.FarClip);
+    return View * Projection;
+}
+
+Math::FMatrix BuildCameraViewMatrix(const Graphics::FCameraState& InCameraState)
+{
+    const DirectX::XMVECTOR CameraPosition = DirectX::XMLoadFloat3(&InCameraState.Position);
+    const DirectX::XMVECTOR Forward = BuildCameraForward(InCameraState);
+    const DirectX::XMVECTOR WorldUp = DirectX::XMVectorSet(0.0f, 0.0f, 1.0f, 0.0f);
+    const DirectX::XMVECTOR CameraTarget = DirectX::XMVectorAdd(CameraPosition, Forward);
+    return DirectX::XMMatrixLookAtLH(CameraPosition, CameraTarget, WorldUp);
+}
+
+Math::FMatrix BuildCameraProjectionMatrix(const Graphics::FCameraState& InCameraState, int InViewportWidth,
+                                          int InViewportHeight)
+{
+    const float AspectRatio =
+        (InViewportHeight == 0) ? 1.0f : static_cast<float>(InViewportWidth) / static_cast<float>(InViewportHeight);
+    return DirectX::XMMatrixPerspectiveFovLH(DirectX::XMConvertToRadians(InCameraState.FOVDegrees), AspectRatio,
+                                             InCameraState.NearClip, InCameraState.FarClip);
+}
+
+bool ComputeSceneBounds(const Scene::USceneManager& InSceneManager, Math::FBox& OutBounds)
+{
+    const Scene::FSceneDataSOA* SceneData = InSceneManager.GetSceneData();
+    const uint32_t Count = InSceneManager.GetObjectCount();
+    if (!SceneData || Count == 0)
+        return false;
+
+    float MinX = (std::numeric_limits<float>::max)();
+    float MinY = (std::numeric_limits<float>::max)();
+    float MinZ = (std::numeric_limits<float>::max)();
+    float MaxX = std::numeric_limits<float>::lowest();
+    float MaxY = std::numeric_limits<float>::lowest();
+    float MaxZ = std::numeric_limits<float>::lowest();
+
+    for (uint32_t Index = 0; Index < Count; ++Index)
+    {
+        MinX = (std::min)(MinX, SceneData->MinX[Index]);
+        MinY = (std::min)(MinY, SceneData->MinY[Index]);
+        MinZ = (std::min)(MinZ, SceneData->MinZ[Index]);
+        MaxX = (std::max)(MaxX, SceneData->MaxX[Index]);
+        MaxY = (std::max)(MaxY, SceneData->MaxY[Index]);
+        MaxZ = (std::max)(MaxZ, SceneData->MaxZ[Index]);
+    }
+
+    OutBounds.Min = {MinX, MinY, MinZ};
+    OutBounds.Max = {MaxX, MaxY, MaxZ};
+    return true;
+}
+
+void FitCameraToScene(const Scene::USceneManager& InSceneManager, Graphics::FCameraState& InOutCameraState,
+                      int InViewportWidth, int InViewportHeight)
+{
+    Math::FBox SceneBounds = {};
+    if (!ComputeSceneBounds(InSceneManager, SceneBounds))
+        return;
+
+    const DirectX::XMFLOAT3 Center = {(SceneBounds.Min.x + SceneBounds.Max.x) * 0.5f,
+                                      (SceneBounds.Min.y + SceneBounds.Max.y) * 0.5f,
+                                      (SceneBounds.Min.z + SceneBounds.Max.z) * 0.5f};
+
+    const DirectX::XMFLOAT3 Extents = {(SceneBounds.Max.x - SceneBounds.Min.x) * 0.5f,
+                                       (SceneBounds.Max.y - SceneBounds.Min.y) * 0.5f,
+                                       (SceneBounds.Max.z - SceneBounds.Min.z) * 0.5f};
+
+    const float BoundingRadius = std::sqrt((Extents.x * Extents.x) + (Extents.y * Extents.y) + (Extents.z * Extents.z));
+
+    const float AspectRatio =
+        (InViewportHeight == 0) ? 1.0f : static_cast<float>(InViewportWidth) / static_cast<float>(InViewportHeight);
+    const float VerticalHalfFov = DirectX::XMConvertToRadians(InOutCameraState.FOVDegrees) * 0.5f;
+    const float HorizontalHalfFov = std::atan(std::tan(VerticalHalfFov) * AspectRatio);
+    const float LimitingHalfFov = (std::min)(VerticalHalfFov, HorizontalHalfFov);
+    const float CameraDistance = (BoundingRadius / std::sin(LimitingHalfFov)) + 12.0f;
+
+    const DirectX::XMVECTOR Forward = DirectX::XMVector3Normalize(DirectX::XMVectorSet(1.0f, 1.0f, -0.5f, 0.0f));
+    const DirectX::XMVECTOR CenterVector = DirectX::XMLoadFloat3(&Center);
+    const DirectX::XMVECTOR CameraPosition =
+        DirectX::XMVectorSubtract(CenterVector, DirectX::XMVectorScale(Forward, CameraDistance));
+
+    DirectX::XMStoreFloat3(&InOutCameraState.Position, CameraPosition);
+    InOutCameraState.YawRadians = std::atan2(DirectX::XMVectorGetY(Forward), DirectX::XMVectorGetX(Forward));
+    InOutCameraState.PitchRadians = std::atan2(
+        DirectX::XMVectorGetZ(Forward), std::sqrt((DirectX::XMVectorGetX(Forward) * DirectX::XMVectorGetX(Forward)) +
+                                                  (DirectX::XMVectorGetY(Forward) * DirectX::XMVectorGetY(Forward))));
+    InOutCameraState.FarClip = (std::max)(InOutCameraState.FarClip, CameraDistance + BoundingRadius + 16.0f);
+    InOutCameraState.NearClip = 0.1f;
+}
+} // namespace
+
+UApp::UApp() : WindowHandle(nullptr), InstanceHandle(nullptr), ScreenWidth(0), ScreenHeight(0)
 {
     Renderer = std::make_unique<Graphics::URenderer>();
     SceneManager = std::make_unique<Scene::USceneManager>();
@@ -152,7 +139,8 @@ UApp::UApp()
 
 UApp::~UApp()
 {
-    if (EditorLayer) EditorLayer->Cleanup();
+    if (EditorLayer)
+        EditorLayer->Cleanup();
     if (bIsCOMInitialized)
     {
         ::CoUninitialize();
@@ -173,7 +161,9 @@ bool UApp::Initialize(HINSTANCE InHInstance, int InCmdShow)
         return false;
     }
 
-    WNDCLASSEXW WindowClass = { sizeof(WNDCLASSEXW), CS_CLASSDC, UApp::WindowProc, 0L, 0L, InstanceHandle, nullptr, nullptr, nullptr, nullptr, L"VerstappenEngineClass", nullptr };
+    WNDCLASSEXW WindowClass = {sizeof(WNDCLASSEXW),      CS_CLASSDC, UApp::WindowProc, 0L,      0L,
+                               InstanceHandle,           nullptr,    nullptr,          nullptr, nullptr,
+                               L"VerstappenEngineClass", nullptr};
     ::RegisterClassExW(&WindowClass);
 
     DWORD WindowStyle;
@@ -181,14 +171,17 @@ bool UApp::Initialize(HINSTANCE InHInstance, int InCmdShow)
     ScreenHeight = 1080;
     WindowStyle = WS_OVERLAPPEDWINDOW;
 
-    WindowHandle = ::CreateWindowW(WindowClass.lpszClassName, AppName.c_str(), WindowStyle, CW_USEDEFAULT, CW_USEDEFAULT, ScreenWidth, ScreenHeight, nullptr, nullptr, InstanceHandle, this);
-    if (!WindowHandle) return false;
+    WindowHandle = ::CreateWindowW(WindowClass.lpszClassName, AppName.c_str(), WindowStyle, CW_USEDEFAULT,
+                                   CW_USEDEFAULT, ScreenWidth, ScreenHeight, nullptr, nullptr, InstanceHandle, this);
+    if (!WindowHandle)
+        return false;
 
     ::SetWindowLongPtrW(WindowHandle, GWLP_USERDATA, reinterpret_cast<LONG_PTR>(this));
     ::ShowWindow(WindowHandle, InCmdShow);
     ::UpdateWindow(WindowHandle);
 
-    if (!Renderer->Initialize(WindowHandle, ScreenWidth, ScreenHeight)) return false;
+    if (!Renderer->Initialize(WindowHandle, ScreenWidth, ScreenHeight))
+        return false;
 
     SceneManager->Initialize();
     if (!Scene::FAssetLoader::LoadDefaultScene(*SceneManager, &CameraState) &&
@@ -212,7 +205,8 @@ bool UApp::Initialize(HINSTANCE InHInstance, int InCmdShow)
     EditorDeps.Device = Renderer->GetDevice();
     EditorDeps.DeviceContext = Renderer->GetContext();
 
-    if (!EditorLayer->Initialize(EditorDeps)) return false;
+    if (!EditorLayer->Initialize(EditorDeps))
+        return false;
 
     return true;
 }
@@ -245,13 +239,13 @@ int UApp::Run()
 
 void UApp::Update(float InDeltaTime)
 {
-	UpdateCamera(InDeltaTime);
+    UpdateCamera(InDeltaTime);
 
     UniformCullingAndRenderCollect();
 
-	UpdateFramePerformanceMetrics(InDeltaTime);
-	SceneManager->Update(InDeltaTime);
-	EditorLayer->Update(InDeltaTime);
+    UpdateFramePerformanceMetrics(InDeltaTime);
+    SceneManager->Update(InDeltaTime);
+    EditorLayer->Update(InDeltaTime);
 }
 
 void UApp::UniformCullingAndRenderCollect()
@@ -265,7 +259,8 @@ void UApp::UniformCullingAndRenderCollect()
         CameraFrustum.Update(View, Proj);
 
         // 최적화된 AVX2 컬링 및 LOD(MeshID) 빌드 함수 호출
-        SceneManager->GetGrid()->CullingAndBuildRenderQueue(CameraFrustum, DirectX::XMLoadFloat3(&CameraState.Position));
+        SceneManager->GetGrid()->CullingAndBuildRenderQueue(CameraFrustum,
+                                                            DirectX::XMLoadFloat3(&CameraState.Position));
     }
 }
 
@@ -286,14 +281,19 @@ void UApp::UpdateCamera(float InDeltaTime)
     DirectX::XMVECTOR Position = DirectX::XMLoadFloat3(&CameraState.Position);
 
     const float MoveDistance = CameraState.MoveSpeed * InDeltaTime;
-    if ((::GetAsyncKeyState('W') & 0x8000) != 0) Position = DirectX::XMVectorAdd(Position, DirectX::XMVectorScale(Forward, MoveDistance));
-    if ((::GetAsyncKeyState('S') & 0x8000) != 0) Position = DirectX::XMVectorSubtract(Position, DirectX::XMVectorScale(Forward, MoveDistance));
-    if ((::GetAsyncKeyState('A') & 0x8000) != 0) Position = DirectX::XMVectorSubtract(Position, DirectX::XMVectorScale(Right, MoveDistance));
-    if ((::GetAsyncKeyState('D') & 0x8000) != 0) Position = DirectX::XMVectorAdd(Position, DirectX::XMVectorScale(Right, MoveDistance));
+    if ((::GetAsyncKeyState('W') & 0x8000) != 0)
+        Position = DirectX::XMVectorAdd(Position, DirectX::XMVectorScale(Forward, MoveDistance));
+    if ((::GetAsyncKeyState('S') & 0x8000) != 0)
+        Position = DirectX::XMVectorSubtract(Position, DirectX::XMVectorScale(Forward, MoveDistance));
+    if ((::GetAsyncKeyState('A') & 0x8000) != 0)
+        Position = DirectX::XMVectorSubtract(Position, DirectX::XMVectorScale(Right, MoveDistance));
+    if ((::GetAsyncKeyState('D') & 0x8000) != 0)
+        Position = DirectX::XMVectorAdd(Position, DirectX::XMVectorScale(Right, MoveDistance));
 
     if (PendingWheelDelta != 0.0f)
     {
-        Position = DirectX::XMVectorAdd(Position, DirectX::XMVectorScale(Forward, PendingWheelDelta * CameraState.WheelSpeed));
+        Position =
+            DirectX::XMVectorAdd(Position, DirectX::XMVectorScale(Forward, PendingWheelDelta * CameraState.WheelSpeed));
         PendingWheelDelta = 0.0f;
     }
 
@@ -318,19 +318,18 @@ void UApp::UpdateFramePerformanceMetrics(float InDeltaTime)
         return;
     }
 
-    const float AverageFPS = (TitleUpdateAccumulator > 0.0f) ? (static_cast<float>(TitleUpdateFrames) / TitleUpdateAccumulator) : 0.0f;
-    const float AverageFrameMilliseconds = (TitleUpdateFrames > 0) ? ((TitleUpdateAccumulator * 1000.0f) / static_cast<float>(TitleUpdateFrames)) : 0.0f;
+    const float AverageFPS =
+        (TitleUpdateAccumulator > 0.0f) ? (static_cast<float>(TitleUpdateFrames) / TitleUpdateAccumulator) : 0.0f;
+    const float AverageFrameMilliseconds =
+        (TitleUpdateFrames > 0) ? ((TitleUpdateAccumulator * 1000.0f) / static_cast<float>(TitleUpdateFrames)) : 0.0f;
 
-	const uint32_t TotalObjects = SceneManager->GetObjectCount();
-	const uint32_t VisibleObjects = SceneManager->GetVisibleObjectCount();
+    const uint32_t TotalObjects = SceneManager->GetObjectCount();
+    const uint32_t VisibleObjects = SceneManager->GetVisibleObjectCount();
 
     std::wostringstream TitleStream;
     TitleStream.precision(2);
-    TitleStream << std::fixed
-                << L"Verstappen Engine | Scene Preview | FPS(avg): " << AverageFPS
-                << L" | Frame(ms): " << AverageFrameMilliseconds
-                << L" | FrustumVisible: " << VisibleObjects
-                << L"/" << TotalObjects;
+    TitleStream << std::fixed << L"Verstappen Engine | Scene Preview | FPS(avg): " << AverageFPS << L" | Frame(ms): "
+                << AverageFrameMilliseconds << L" | FrustumVisible: " << VisibleObjects << L"/" << TotalObjects;
     ::SetWindowTextW(WindowHandle, TitleStream.str().c_str());
 
     TitleUpdateAccumulator = 0.0f;
@@ -342,7 +341,8 @@ LRESULT CALLBACK UApp::WindowProc(HWND hWnd, UINT Message, WPARAM wParam, LPARAM
     UApp* AppInstance = reinterpret_cast<UApp*>(::GetWindowLongPtrW(hWnd, GWLP_USERDATA));
     if (AppInstance != nullptr && AppInstance->EditorLayer != nullptr)
     {
-        if (AppInstance->EditorLayer->HandleWindowMessage(hWnd, Message, wParam, lParam)) return 1;
+        if (AppInstance->EditorLayer->HandleWindowMessage(hWnd, Message, wParam, lParam))
+            return 1;
     }
 
     switch (Message)
@@ -366,15 +366,16 @@ LRESULT CALLBACK UApp::WindowProc(HWND hWnd, UINT Message, WPARAM wParam, LPARAM
     case WM_MOUSEMOVE:
         if (AppInstance != nullptr && AppInstance->bIsRightMouseLooking)
         {
-            const POINT CurrentMousePosition = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+            const POINT CurrentMousePosition = {GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam)};
             const int DeltaX = CurrentMousePosition.x - AppInstance->LastMousePosition.x;
             const int DeltaY = CurrentMousePosition.y - AppInstance->LastMousePosition.y;
 
-            AppInstance->CameraState.YawRadians += static_cast<float>(DeltaX) * AppInstance->CameraState.LookSensitivity;
-            AppInstance->CameraState.PitchRadians = (std::clamp)(
-                AppInstance->CameraState.PitchRadians - static_cast<float>(DeltaY) * AppInstance->CameraState.LookSensitivity,
-                -MAX_PITCH_RADIANS,
-                MAX_PITCH_RADIANS);
+            AppInstance->CameraState.YawRadians +=
+                static_cast<float>(DeltaX) * AppInstance->CameraState.LookSensitivity;
+            AppInstance->CameraState.PitchRadians =
+                (std::clamp)(AppInstance->CameraState.PitchRadians -
+                                 static_cast<float>(DeltaY) * AppInstance->CameraState.LookSensitivity,
+                             -MAX_PITCH_RADIANS, MAX_PITCH_RADIANS);
             AppInstance->LastMousePosition = CurrentMousePosition;
             return 0;
         }
@@ -382,7 +383,8 @@ LRESULT CALLBACK UApp::WindowProc(HWND hWnd, UINT Message, WPARAM wParam, LPARAM
     case WM_MOUSEWHEEL:
         if (AppInstance != nullptr)
         {
-            AppInstance->PendingWheelDelta += static_cast<float>(GET_WHEEL_DELTA_WPARAM(wParam)) / static_cast<float>(WHEEL_DELTA);
+            AppInstance->PendingWheelDelta +=
+                static_cast<float>(GET_WHEEL_DELTA_WPARAM(wParam)) / static_cast<float>(WHEEL_DELTA);
         }
         return 0;
     case WM_DESTROY:

@@ -1,117 +1,262 @@
-﻿#include <Graphics/Renderer.h>
-#include <Core/PathManager.h>
+﻿#include <Core/PathManager.h>
+#include <DirectXMath.h>
+#include <Graphics/Renderer.h>
 #include <Math/MathTypes.h>
 #include <Scene/SceneData.h>
 #include <Scene/SceneManager.h>
-#include <DirectXMath.h>
-#include <d3dcompiler.h>
-#include <wincodec.h>
 #include <algorithm>
 #include <array>
-#include <vector>
+#include <d3dcompiler.h>
+#include <fstream>
+#include <sstream>
 #include <string>
 #include <unordered_map>
-#include <sstream>
-#include <fstream>
+#include <vector>
+#include <wincodec.h>
 
 namespace Graphics
 {
-    namespace
+namespace
+{
+struct FPerFrameConstants
+{
+    DirectX::XMFLOAT4X4 VP;
+    DirectX::XMFLOAT4 CR;
+    DirectX::XMFLOAT4 CU;
+    DirectX::XMFLOAT4 CP;
+};
+struct FPerObjectConstants
+{
+    DirectX::XMFLOAT4 R0;
+    DirectX::XMFLOAT4 R1;
+    DirectX::XMFLOAT4 R2;
+    DirectX::XMFLOAT4 PD;
+};
+struct FMaterialConstants
+{
+    DirectX::XMFLOAT4 BC;
+};
+struct FObjVertexKey
+{
+    int p, t, n;
+    bool operator==(const FObjVertexKey& o) const
     {
-        struct FPerFrameConstants { DirectX::XMFLOAT4X4 VP; DirectX::XMFLOAT4 CR; DirectX::XMFLOAT4 CU; DirectX::XMFLOAT4 CP; };
-        struct FPerObjectConstants { DirectX::XMFLOAT4 R0; DirectX::XMFLOAT4 R1; DirectX::XMFLOAT4 R2; DirectX::XMFLOAT4 PD; };
-        struct FMaterialConstants { DirectX::XMFLOAT4 BC; };
-        struct FObjVertexKey { int p, t, n; bool operator==(const FObjVertexKey& o) const { return p == o.p && t == o.t && n == o.n; } };
-        struct FObjVertexKeyHasher { size_t operator()(const FObjVertexKey& k) const noexcept { return std::hash<int>{}(k.p) ^ (std::hash<int>{}(k.t) << 1) ^ (std::hash<int>{}(k.n) << 2); } };
+        return p == o.p && t == o.t && n == o.n;
+    }
+};
+struct FObjVertexKeyHasher
+{
+    size_t operator()(const FObjVertexKey& k) const noexcept
+    {
+        return std::hash<int>{}(k.p) ^ (std::hash<int>{}(k.t) << 1) ^ (std::hash<int>{}(k.n) << 2);
+    }
+};
 
-        bool ParseObjFaceIndices(const std::string& tok, int& p, int& t, int& n) {
-            p = t = n = -1; size_t s1 = tok.find('/');
-            if (s1 == std::string::npos) { p = std::stoi(tok) - 1; return p >= 0; }
-            p = std::stoi(tok.substr(0, s1)) - 1; size_t s2 = tok.find('/', s1 + 1);
-            if (s2 == std::string::npos) { if (s1 + 1 < tok.size()) t = std::stoi(tok.substr(s1 + 1)) - 1; return p >= 0; }
-            if (s2 > s1 + 1) t = std::stoi(tok.substr(s1 + 1, s2 - s1 - 1)) - 1;
-            if (s2 + 1 < tok.size()) n = std::stoi(tok.substr(s2 + 1)) - 1;
-            return p >= 0;
+bool ParseObjFaceIndices(const std::string& tok, int& p, int& t, int& n)
+{
+    p = t = n = -1;
+    size_t s1 = tok.find('/');
+    if (s1 == std::string::npos)
+    {
+        p = std::stoi(tok) - 1;
+        return p >= 0;
+    }
+    p = std::stoi(tok.substr(0, s1)) - 1;
+    size_t s2 = tok.find('/', s1 + 1);
+    if (s2 == std::string::npos)
+    {
+        if (s1 + 1 < tok.size())
+            t = std::stoi(tok.substr(s1 + 1)) - 1;
+        return p >= 0;
+    }
+    if (s2 > s1 + 1)
+        t = std::stoi(tok.substr(s1 + 1, s2 - s1 - 1)) - 1;
+    if (s2 + 1 < tok.size())
+        n = std::stoi(tok.substr(s2 + 1)) - 1;
+    return p >= 0;
+}
+
+bool LoadObjMeshData(const std::wstring& path, std::vector<URenderer::FMeshVertex>& verts,
+                     std::vector<uint32_t>& indices, std::wstring& texPath)
+{
+    std::ifstream f{std::filesystem::path(path)};
+    if (!f)
+        return false;
+    std::vector<DirectX::XMFLOAT3> P;
+    std::vector<DirectX::XMFLOAT3> N;
+    std::vector<DirectX::XMFLOAT2> T;
+    std::unordered_map<FObjVertexKey, uint32_t, FObjVertexKeyHasher> vm;
+    std::string line;
+    while (std::getline(f, line))
+    {
+        if (line.size() < 2)
+            continue;
+        std::istringstream ls(line);
+        std::string pre;
+        ls >> pre;
+        if (pre == "v")
+        {
+            DirectX::XMFLOAT3 v = {};
+            ls >> v.x >> v.y >> v.z;
+            P.push_back(v);
         }
-
-        bool LoadObjMeshData(const std::wstring& path, std::vector<URenderer::FMeshVertex>& verts, std::vector<uint32_t>& indices, std::wstring& texPath) {
-            std::ifstream f{ std::filesystem::path(path) }; if (!f) return false;
-            std::vector<DirectX::XMFLOAT3> P; std::vector<DirectX::XMFLOAT3> N; std::vector<DirectX::XMFLOAT2> T;
-            std::unordered_map<FObjVertexKey, uint32_t, FObjVertexKeyHasher> vm; std::string line;
-            while (std::getline(f, line)) {
-                if (line.size() < 2) continue; std::istringstream ls(line); std::string pre; ls >> pre;
-                if (pre == "v") { DirectX::XMFLOAT3 v = {}; ls >> v.x >> v.y >> v.z; P.push_back(v); }
-                else if (pre == "vt") { DirectX::XMFLOAT2 v = {}; ls >> v.x >> v.y; v.y = 1.0f - v.y; T.push_back(v); }
-                else if (pre == "vn") { DirectX::XMFLOAT3 v = {}; ls >> v.x >> v.y >> v.z; N.push_back(v); }
-                else if (pre == "f") {
-                    std::vector<std::string> toks; std::string t; while (ls >> t) toks.push_back(t);
-                    for (size_t tri = 1; tri + 1 < toks.size(); ++tri) {
-                        const std::array<std::string, 3> tt = { toks[0], toks[tri], toks[tri + 1] };
-                        for (const std::string& ft : tt) {
-                            FObjVertexKey k = {}; if (!ParseObjFaceIndices(ft, k.p, k.t, k.n)) continue;
-                            if (k.p < 0 || (size_t)k.p >= P.size()) continue;
-                            auto it = vm.find(k); if (it != vm.end()) { indices.push_back(it->second); continue; }
-                            URenderer::FMeshVertex v = {}; v.Position = P[k.p];
-                            v.Normal = (k.n >= 0 && (size_t)k.n < N.size()) ? N[k.n] : DirectX::XMFLOAT3{ 0, 0, 1 };
-                            v.TexCoord = (k.t >= 0 && (size_t)k.t < T.size()) ? T[k.t] : DirectX::XMFLOAT2{ 0, 0 };
-                            uint32_t vi = (uint32_t)verts.size(); verts.push_back(v); indices.push_back(vi); vm.emplace(k, vi);
-                        }
+        else if (pre == "vt")
+        {
+            DirectX::XMFLOAT2 v = {};
+            ls >> v.x >> v.y;
+            v.y = 1.0f - v.y;
+            T.push_back(v);
+        }
+        else if (pre == "vn")
+        {
+            DirectX::XMFLOAT3 v = {};
+            ls >> v.x >> v.y >> v.z;
+            N.push_back(v);
+        }
+        else if (pre == "f")
+        {
+            std::vector<std::string> toks;
+            std::string t;
+            while (ls >> t)
+                toks.push_back(t);
+            for (size_t tri = 1; tri + 1 < toks.size(); ++tri)
+            {
+                const std::array<std::string, 3> tt = {toks[0], toks[tri], toks[tri + 1]};
+                for (const std::string& ft : tt)
+                {
+                    FObjVertexKey k = {};
+                    if (!ParseObjFaceIndices(ft, k.p, k.t, k.n))
+                        continue;
+                    if (k.p < 0 || (size_t)k.p >= P.size())
+                        continue;
+                    auto it = vm.find(k);
+                    if (it != vm.end())
+                    {
+                        indices.push_back(it->second);
+                        continue;
                     }
+                    URenderer::FMeshVertex v = {};
+                    v.Position = P[k.p];
+                    v.Normal = (k.n >= 0 && (size_t)k.n < N.size()) ? N[k.n] : DirectX::XMFLOAT3{0, 0, 1};
+                    v.TexCoord = (k.t >= 0 && (size_t)k.t < T.size()) ? T[k.t] : DirectX::XMFLOAT2{0, 0};
+                    uint32_t vi = (uint32_t)verts.size();
+                    verts.push_back(v);
+                    indices.push_back(vi);
+                    vm.emplace(k, vi);
                 }
             }
-            texPath = (path.find(L"bitten") != std::string::npos) ? L"Data/JungleApples/Bitten_Apple_tgyociqpa_Mid_2K_BaseColor.jpg" : L"Data/JungleApples/Freshly_Bitten_Apple_tgzpdhlpa_Mid_2K_BaseColor.jpg";
-            return !verts.empty();
-        }
-
-        bool LoadTextureWithWIC(ID3D11Device* dev, const std::wstring& path, Microsoft::WRL::ComPtr<ID3D11ShaderResourceView>& srv) {
-            Microsoft::WRL::ComPtr<IWICImagingFactory> fact; CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&fact));
-            Microsoft::WRL::ComPtr<IWICBitmapDecoder> dec; if (FAILED(fact->CreateDecoderFromFilename(path.c_str(), nullptr, GENERIC_READ, WICDecodeMetadataCacheOnLoad, &dec))) return false;
-            Microsoft::WRL::ComPtr<IWICBitmapFrameDecode> frame; dec->GetFrame(0, &frame);
-            Microsoft::WRL::ComPtr<IWICFormatConverter> conv; fact->CreateFormatConverter(&conv);
-            conv->Initialize(frame.Get(), GUID_WICPixelFormat32bppRGBA, WICBitmapDitherTypeNone, nullptr, 0.0f, WICBitmapPaletteTypeCustom);
-            UINT w, h; conv->GetSize(&w, &h); std::vector<uint8_t> pix((size_t)w * h * 4); conv->CopyPixels(nullptr, w * 4, (UINT)pix.size(), pix.data());
-            D3D11_TEXTURE2D_DESC td = { w, h, 1, 1, DXGI_FORMAT_R8G8B8A8_UNORM, {1, 0}, D3D11_USAGE_DEFAULT, D3D11_BIND_SHADER_RESOURCE, 0, 0 };
-            D3D11_SUBRESOURCE_DATA id = { pix.data(), w * 4, 0 }; Microsoft::WRL::ComPtr<ID3D11Texture2D> tex;
-            dev->CreateTexture2D(&td, &id, &tex); return SUCCEEDED(dev->CreateShaderResourceView(tex.Get(), nullptr, &srv));
-        }
-
-        bool LoadMeshResource(ID3D11Device* dev, const std::wstring& path, URenderer::FMeshResource& res) {
-            if (!LoadObjMeshData(path, res.SourceVertices, res.SourceIndices, res.DiffuseTexturePath)) return false;
-            float minX = 1e9f, minY = 1e9f, minZ = 1e9f, maxX = -1e9f, maxY = -1e9f, maxZ = -1e9f;
-            for (const auto& v : res.SourceVertices) {
-                minX = (std::min)(minX, v.Position.x); minY = (std::min)(minY, v.Position.y); minZ = (std::min)(minZ, v.Position.z);
-                maxX = (std::max)(maxX, v.Position.x); maxY = (std::max)(maxY, v.Position.y); maxZ = (std::max)(maxZ, v.Position.z);
-            }
-            res.LocalCenter = { (minX + maxX) * 0.5f, (minY + maxY) * 0.5f, (minZ + maxZ) * 0.5f };
-            D3D11_BUFFER_DESC vb = { (UINT)(res.SourceVertices.size() * sizeof(URenderer::FMeshVertex)), D3D11_USAGE_DEFAULT, D3D11_BIND_VERTEX_BUFFER, 0, 0, 0 };
-            D3D11_SUBRESOURCE_DATA vd = { res.SourceVertices.data(), 0, 0 }; dev->CreateBuffer(&vb, &vd, &res.VertexBuffer);
-            D3D11_BUFFER_DESC ib = { (UINT)(res.SourceIndices.size() * sizeof(uint32_t)), D3D11_USAGE_DEFAULT, D3D11_BIND_INDEX_BUFFER, 0, 0, 0 };
-            D3D11_SUBRESOURCE_DATA id = { res.SourceIndices.data(), 0, 0 }; dev->CreateBuffer(&ib, &id, &res.IndexBuffer);
-            LoadTextureWithWIC(dev, res.DiffuseTexturePath, res.DiffuseTextureView);
-            res.IndexCount = (uint32_t)res.SourceIndices.size(); return true;
         }
     }
+    texPath = (path.find(L"bitten") != std::string::npos)
+                  ? L"Data/JungleApples/Bitten_Apple_tgyociqpa_Mid_2K_BaseColor.jpg"
+                  : L"Data/JungleApples/Freshly_Bitten_Apple_tgzpdhlpa_Mid_2K_BaseColor.jpg";
+    return !verts.empty();
+}
 
-    URenderer::URenderer() = default;
-    URenderer::~URenderer() = default;
+bool LoadTextureWithWIC(ID3D11Device* dev, const std::wstring& path,
+                        Microsoft::WRL::ComPtr<ID3D11ShaderResourceView>& srv)
+{
+    Microsoft::WRL::ComPtr<IWICImagingFactory> fact;
+    CoCreateInstance(CLSID_WICImagingFactory, nullptr, CLSCTX_INPROC_SERVER, IID_PPV_ARGS(&fact));
+    Microsoft::WRL::ComPtr<IWICBitmapDecoder> dec;
+    if (FAILED(
+            fact->CreateDecoderFromFilename(path.c_str(), nullptr, GENERIC_READ, WICDecodeMetadataCacheOnLoad, &dec)))
+        return false;
+    Microsoft::WRL::ComPtr<IWICBitmapFrameDecode> frame;
+    dec->GetFrame(0, &frame);
+    Microsoft::WRL::ComPtr<IWICFormatConverter> conv;
+    fact->CreateFormatConverter(&conv);
+    conv->Initialize(frame.Get(), GUID_WICPixelFormat32bppRGBA, WICBitmapDitherTypeNone, nullptr, 0.0f,
+                     WICBitmapPaletteTypeCustom);
+    UINT w, h;
+    conv->GetSize(&w, &h);
+    std::vector<uint8_t> pix((size_t)w * h * 4);
+    conv->CopyPixels(nullptr, w * 4, (UINT)pix.size(), pix.data());
+    D3D11_TEXTURE2D_DESC td = {
+        w, h, 1, 1, DXGI_FORMAT_R8G8B8A8_UNORM, {1, 0}, D3D11_USAGE_DEFAULT, D3D11_BIND_SHADER_RESOURCE, 0, 0};
+    D3D11_SUBRESOURCE_DATA id = {pix.data(), w * 4, 0};
+    Microsoft::WRL::ComPtr<ID3D11Texture2D> tex;
+    dev->CreateTexture2D(&td, &id, &tex);
+    return SUCCEEDED(dev->CreateShaderResourceView(tex.Get(), nullptr, &srv));
+}
 
-    bool URenderer::Initialize(HWND HW, int W, int H) {
-        ViewportWidth = (uint32_t)W; ViewportHeight = (uint32_t)H;
-        DXGI_SWAP_CHAIN_DESC sd = { { (UINT)W, (UINT)H, {0, 0}, DXGI_FORMAT_R8G8B8A8_UNORM, DXGI_MODE_SCANLINE_ORDER_UNSPECIFIED, DXGI_MODE_SCALING_UNSPECIFIED }, {1, 0}, DXGI_USAGE_RENDER_TARGET_OUTPUT, 3, HW, TRUE, DXGI_SWAP_EFFECT_FLIP_DISCARD, DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING };
-        if (FAILED(D3D11CreateDeviceAndSwapChain(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, 0, nullptr, 0, D3D11_SDK_VERSION, &sd, &SwapChain, &Device, nullptr, &Context))) return false;
-        Context.As(&Context1);
-        ComPtr<ID3D11Texture2D> bb; SwapChain->GetBuffer(0, IID_PPV_ARGS(&bb)); Device->CreateRenderTargetView(bb.Get(), nullptr, &MainRenderTargetView);
-        D3D11_TEXTURE2D_DESC dd = { (UINT)W, (UINT)H, 1, 1, DXGI_FORMAT_D24_UNORM_S8_UINT, {1, 0}, D3D11_USAGE_DEFAULT, D3D11_BIND_DEPTH_STENCIL, 0, 0 };
-        ComPtr<ID3D11Texture2D> dt; Device->CreateTexture2D(&dd, nullptr, &dt); Device->CreateDepthStencilView(dt.Get(), nullptr, &DepthStencilView);
-        return CreateDefaultResources();
+bool LoadMeshResource(ID3D11Device* dev, const std::wstring& path, URenderer::FMeshResource& res)
+{
+    if (!LoadObjMeshData(path, res.SourceVertices, res.SourceIndices, res.DiffuseTexturePath))
+        return false;
+    float minX = 1e9f, minY = 1e9f, minZ = 1e9f, maxX = -1e9f, maxY = -1e9f, maxZ = -1e9f;
+    for (const auto& v : res.SourceVertices)
+    {
+        minX = (std::min)(minX, v.Position.x);
+        minY = (std::min)(minY, v.Position.y);
+        minZ = (std::min)(minZ, v.Position.z);
+        maxX = (std::max)(maxX, v.Position.x);
+        maxY = (std::max)(maxY, v.Position.y);
+        maxZ = (std::max)(maxZ, v.Position.z);
     }
+    res.LocalCenter = {(minX + maxX) * 0.5f, (minY + maxY) * 0.5f, (minZ + maxZ) * 0.5f};
+    D3D11_BUFFER_DESC vb = {(UINT)(res.SourceVertices.size() * sizeof(URenderer::FMeshVertex)),
+                            D3D11_USAGE_DEFAULT,
+                            D3D11_BIND_VERTEX_BUFFER,
+                            0,
+                            0,
+                            0};
+    D3D11_SUBRESOURCE_DATA vd = {res.SourceVertices.data(), 0, 0};
+    dev->CreateBuffer(&vb, &vd, &res.VertexBuffer);
+    D3D11_BUFFER_DESC ib = {
+        (UINT)(res.SourceIndices.size() * sizeof(uint32_t)), D3D11_USAGE_DEFAULT, D3D11_BIND_INDEX_BUFFER, 0, 0, 0};
+    D3D11_SUBRESOURCE_DATA id = {res.SourceIndices.data(), 0, 0};
+    dev->CreateBuffer(&ib, &id, &res.IndexBuffer);
+    LoadTextureWithWIC(dev, res.DiffuseTexturePath, res.DiffuseTextureView);
+    res.IndexCount = (uint32_t)res.SourceIndices.size();
+    return true;
+}
+} // namespace
 
-    bool URenderer::CreateDefaultResources() {
-        D3D11_BUFFER_DESC bfd = { sizeof(FPerFrameConstants), D3D11_USAGE_DYNAMIC, D3D11_BIND_CONSTANT_BUFFER, D3D11_CPU_ACCESS_WRITE, 0, 0 };
-        Device->CreateBuffer(&bfd, nullptr, &BakePerFrameBuffer);
-        D3D11_BUFFER_DESC bod = { 4096, D3D11_USAGE_DYNAMIC, D3D11_BIND_CONSTANT_BUFFER, D3D11_CPU_ACCESS_WRITE, 0, 0 };
-        Device->CreateBuffer(&bod, nullptr, &BakePerObjectBuffer);
-        const char* ShaderSrc = R"(
+URenderer::URenderer() = default;
+URenderer::~URenderer() = default;
+
+bool URenderer::Initialize(HWND HW, int W, int H)
+{
+    ViewportWidth = (uint32_t)W;
+    ViewportHeight = (uint32_t)H;
+    DXGI_SWAP_CHAIN_DESC sd = {{(UINT)W,
+                                (UINT)H,
+                                {0, 0},
+                                DXGI_FORMAT_R8G8B8A8_UNORM,
+                                DXGI_MODE_SCANLINE_ORDER_UNSPECIFIED,
+                                DXGI_MODE_SCALING_UNSPECIFIED},
+                               {1, 0},
+                               DXGI_USAGE_RENDER_TARGET_OUTPUT,
+                               3,
+                               HW,
+                               TRUE,
+                               DXGI_SWAP_EFFECT_FLIP_DISCARD,
+                               DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING};
+    if (FAILED(D3D11CreateDeviceAndSwapChain(nullptr, D3D_DRIVER_TYPE_HARDWARE, nullptr, 0, nullptr, 0,
+                                             D3D11_SDK_VERSION, &sd, &SwapChain, &Device, nullptr, &Context)))
+        return false;
+    Context.As(&Context1);
+    ComPtr<ID3D11Texture2D> bb;
+    SwapChain->GetBuffer(0, IID_PPV_ARGS(&bb));
+    Device->CreateRenderTargetView(bb.Get(), nullptr, &MainRenderTargetView);
+    D3D11_TEXTURE2D_DESC dd = {
+        (UINT)W, (UINT)H, 1, 1, DXGI_FORMAT_D24_UNORM_S8_UINT, {1, 0}, D3D11_USAGE_DEFAULT, D3D11_BIND_DEPTH_STENCIL,
+        0,       0};
+    ComPtr<ID3D11Texture2D> dt;
+    Device->CreateTexture2D(&dd, nullptr, &dt);
+    Device->CreateDepthStencilView(dt.Get(), nullptr, &DepthStencilView);
+    return CreateDefaultResources();
+}
+
+bool URenderer::CreateDefaultResources()
+{
+    D3D11_BUFFER_DESC bfd = {
+        sizeof(FPerFrameConstants), D3D11_USAGE_DYNAMIC, D3D11_BIND_CONSTANT_BUFFER, D3D11_CPU_ACCESS_WRITE, 0, 0};
+    Device->CreateBuffer(&bfd, nullptr, &BakePerFrameBuffer);
+    D3D11_BUFFER_DESC bod = {4096, D3D11_USAGE_DYNAMIC, D3D11_BIND_CONSTANT_BUFFER, D3D11_CPU_ACCESS_WRITE, 0, 0};
+    Device->CreateBuffer(&bod, nullptr, &BakePerObjectBuffer);
+    const char* ShaderSrc = R"(
             cbuffer PF:register(b0){row_major float4x4 VP;float4 CR;float4 CU;float4 CP;};
             cbuffer PO:register(b1){float4 R0;float4 R1;float4 R2;float4 PD;};
             cbuffer MD:register(b2){float4 BC;};
@@ -123,29 +268,44 @@ namespace Graphics
                 return DT.Sample(SS, i.T) * BC; 
             }
         )";
-        ComPtr<ID3DBlob> VS, PS, Err;
-        D3DCompile(ShaderSrc, strlen(ShaderSrc), nullptr, nullptr, nullptr, "VSMain", "vs_5_0", 0, 0, &VS, &Err);
-        D3DCompile(ShaderSrc, strlen(ShaderSrc), nullptr, nullptr, nullptr, "PSMain", "ps_5_0", 0, 0, &PS, &Err);
-        Device->CreateVertexShader(VS->GetBufferPointer(), VS->GetBufferSize(), nullptr, &VertexShader);
-        Device->CreatePixelShader(PS->GetBufferPointer(), PS->GetBufferSize(), nullptr, &PixelShader);
-        D3D11_INPUT_ELEMENT_DESC lay[] = { { "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0 }, { "NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D11_INPUT_PER_VERTEX_DATA, 0 }, { "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 24, D3D11_INPUT_PER_VERTEX_DATA, 0 } };
-        Device->CreateInputLayout(lay, 3, VS->GetBufferPointer(), VS->GetBufferSize(), &InputLayout);
-        D3D11_BUFFER_DESC pfd = { sizeof(FPerFrameConstants), D3D11_USAGE_DYNAMIC, D3D11_BIND_CONSTANT_BUFFER, D3D11_CPU_ACCESS_WRITE, 0, 0 };
-        Device->CreateBuffer(&pfd, nullptr, &PerFrameBuffer);
-        D3D11_BUFFER_DESC pod = { 64 * 1024 * 1024, D3D11_USAGE_DYNAMIC, D3D11_BIND_CONSTANT_BUFFER, D3D11_CPU_ACCESS_WRITE, 0, 0 };
-        Device->CreateBuffer(&pod, nullptr, &PerObjectBuffer);
-        D3D11_BUFFER_DESC mcd = { sizeof(FMaterialConstants), D3D11_USAGE_DYNAMIC, D3D11_BIND_CONSTANT_BUFFER, D3D11_CPU_ACCESS_WRITE, 0, 0 };
-        Device->CreateBuffer(&mcd, nullptr, &MaterialBuffer);
-        D3D11_SAMPLER_DESC ssd = { D3D11_FILTER_MIN_MAG_MIP_LINEAR, D3D11_TEXTURE_ADDRESS_WRAP, D3D11_TEXTURE_ADDRESS_WRAP, D3D11_TEXTURE_ADDRESS_WRAP, 0, 1, D3D11_COMPARISON_NEVER, {0,0,0,0}, 0, D3D11_FLOAT32_MAX };
-        Device->CreateSamplerState(&ssd, &DiffuseSamplerState);
-        D3D11_RASTERIZER_DESC rd = { D3D11_FILL_SOLID, D3D11_CULL_BACK, FALSE, 0, 0.0f, 0.0f, TRUE, FALSE, FALSE, FALSE };
-        Device->CreateRasterizerState(&rd, &DefaultRasterizerState);
-        D3D11_DEPTH_STENCIL_DESC dsd = { TRUE, D3D11_DEPTH_WRITE_MASK_ALL, D3D11_COMPARISON_LESS_EQUAL, FALSE, 0, 0, {}, {} };
-        Device->CreateDepthStencilState(&dsd, &DefaultDepthStencilState);
-        const std::wstring base = Core::FPathManager::GetMeshPath();
-        LoadMeshResource(Device.Get(), base + L"apple_mid.obj", MeshResources[0]);
-        LoadMeshResource(Device.Get(), base + L"bitten_apple_mid.obj", MeshResources[1]);
-        const char* BBShader = R"(
+    ComPtr<ID3DBlob> VS, PS, Err;
+    D3DCompile(ShaderSrc, strlen(ShaderSrc), nullptr, nullptr, nullptr, "VSMain", "vs_5_0", 0, 0, &VS, &Err);
+    D3DCompile(ShaderSrc, strlen(ShaderSrc), nullptr, nullptr, nullptr, "PSMain", "ps_5_0", 0, 0, &PS, &Err);
+    Device->CreateVertexShader(VS->GetBufferPointer(), VS->GetBufferSize(), nullptr, &VertexShader);
+    Device->CreatePixelShader(PS->GetBufferPointer(), PS->GetBufferSize(), nullptr, &PixelShader);
+    D3D11_INPUT_ELEMENT_DESC lay[] = {
+        {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0},
+        {"NORMAL", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 12, D3D11_INPUT_PER_VERTEX_DATA, 0},
+        {"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 24, D3D11_INPUT_PER_VERTEX_DATA, 0}};
+    Device->CreateInputLayout(lay, 3, VS->GetBufferPointer(), VS->GetBufferSize(), &InputLayout);
+    D3D11_BUFFER_DESC pfd = {
+        sizeof(FPerFrameConstants), D3D11_USAGE_DYNAMIC, D3D11_BIND_CONSTANT_BUFFER, D3D11_CPU_ACCESS_WRITE, 0, 0};
+    Device->CreateBuffer(&pfd, nullptr, &PerFrameBuffer);
+    D3D11_BUFFER_DESC pod = {
+        64 * 1024 * 1024, D3D11_USAGE_DYNAMIC, D3D11_BIND_CONSTANT_BUFFER, D3D11_CPU_ACCESS_WRITE, 0, 0};
+    Device->CreateBuffer(&pod, nullptr, &PerObjectBuffer);
+    D3D11_BUFFER_DESC mcd = {
+        sizeof(FMaterialConstants), D3D11_USAGE_DYNAMIC, D3D11_BIND_CONSTANT_BUFFER, D3D11_CPU_ACCESS_WRITE, 0, 0};
+    Device->CreateBuffer(&mcd, nullptr, &MaterialBuffer);
+    D3D11_SAMPLER_DESC ssd = {D3D11_FILTER_MIN_MAG_MIP_LINEAR,
+                              D3D11_TEXTURE_ADDRESS_WRAP,
+                              D3D11_TEXTURE_ADDRESS_WRAP,
+                              D3D11_TEXTURE_ADDRESS_WRAP,
+                              0,
+                              1,
+                              D3D11_COMPARISON_NEVER,
+                              {0, 0, 0, 0},
+                              0,
+                              D3D11_FLOAT32_MAX};
+    Device->CreateSamplerState(&ssd, &DiffuseSamplerState);
+    D3D11_RASTERIZER_DESC rd = {D3D11_FILL_SOLID, D3D11_CULL_BACK, FALSE, 0, 0.0f, 0.0f, TRUE, FALSE, FALSE, FALSE};
+    Device->CreateRasterizerState(&rd, &DefaultRasterizerState);
+    D3D11_DEPTH_STENCIL_DESC dsd = {TRUE, D3D11_DEPTH_WRITE_MASK_ALL, D3D11_COMPARISON_LESS_EQUAL, FALSE, 0, 0, {}, {}};
+    Device->CreateDepthStencilState(&dsd, &DefaultDepthStencilState);
+    const std::wstring base = Core::FPathManager::GetMeshPath();
+    LoadMeshResource(Device.Get(), base + L"apple_mid.obj", MeshResources[0]);
+    LoadMeshResource(Device.Get(), base + L"bitten_apple_mid.obj", MeshResources[1]);
+    const char* BBShader = R"(
             cbuffer PF:register(b0){row_major float4x4 VP;float4 CR;float4 CU;float4 CP;};
             cbuffer PO:register(b1){float4 R0;float4 R1;float4 R2;float4 PD;};
             Texture2D SN:register(t0);SamplerState SS:register(s0);
@@ -185,131 +345,277 @@ namespace Graphics
                 return c;
             }
         )";
-        D3DCompile(BBShader, strlen(BBShader), nullptr, nullptr, nullptr, "VSMain", "vs_5_0", 0, 0, &VS, &Err);
-        D3DCompile(BBShader, strlen(BBShader), nullptr, nullptr, nullptr, "PSMain", "ps_5_0", 0, 0, &PS, &Err);
-        Device->CreateVertexShader(VS->GetBufferPointer(), VS->GetBufferSize(), nullptr, &BillboardVS);
-        Device->CreatePixelShader(PS->GetBufferPointer(), PS->GetBufferSize(), nullptr, &BillboardPS);
-        D3D11_INPUT_ELEMENT_DESC bbl[] = { { "POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0 }, { "TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 12, D3D11_INPUT_PER_VERTEX_DATA, 0 } };
-        Device->CreateInputLayout(bbl, 2, VS->GetBufferPointer(), VS->GetBufferSize(), &BillboardLayout);
-        FBillboardVertex bbv[] = { { {-0.5f, 0, 0.5f}, {0, 0} }, { {0.5f, 0, 0.5f}, {1, 0} }, { {-0.5f, 0, -0.5f}, {0, 1} }, { {0.5f, 0, -0.5f}, {1, 1} } };
-        D3D11_BUFFER_DESC bvb = { sizeof(bbv), D3D11_USAGE_DEFAULT, D3D11_BIND_VERTEX_BUFFER, 0, 0, 0 };
-        D3D11_SUBRESOURCE_DATA bvd = { bbv, 0, 0 }; Device->CreateBuffer(&bvb, &bvd, &BillboardVB);
-        uint32_t bbi[] = { 0, 1, 2, 2, 1, 3 };
-        D3D11_BUFFER_DESC bib = { sizeof(bbi), D3D11_USAGE_DEFAULT, D3D11_BIND_INDEX_BUFFER, 0, 0, 0 };
-        D3D11_SUBRESOURCE_DATA bid = { bbi, 0, 0 }; Device->CreateBuffer(&bib, &bid, &BillboardIB);
-        BakeImpostor(0); BakeImpostor(1); return true;
-    }
-
-    void URenderer::BakeImpostor(uint32_t MeshID) {
-        const FMeshResource& res = MeshResources[MeshID]; if (res.SourceVertices.empty()) return;
-        D3D11_TEXTURE2D_DESC td = { 1024, 512, 1, 1, DXGI_FORMAT_R8G8B8A8_UNORM, {1, 0}, D3D11_USAGE_DEFAULT, D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE, 0, 0 };
-        ComPtr<ID3D11Texture2D> tex; Device->CreateTexture2D(&td, nullptr, &tex);
-        ComPtr<ID3D11RenderTargetView> rtv; Device->CreateRenderTargetView(tex.Get(), nullptr, &rtv);
-        ComPtr<ID3D11ShaderResourceView> srv; Device->CreateShaderResourceView(tex.Get(), nullptr, &srv);
-        D3D11_TEXTURE2D_DESC dd = { 1024, 512, 1, 1, DXGI_FORMAT_D24_UNORM_S8_UINT, {1, 0}, D3D11_USAGE_DEFAULT, D3D11_BIND_DEPTH_STENCIL, 0, 0 };
-        ComPtr<ID3D11Texture2D> dtx; Device->CreateTexture2D(&dd, nullptr, &dtx);
-        ComPtr<ID3D11DepthStencilView> dsv; Device->CreateDepthStencilView(dtx.Get(), nullptr, &dsv);
-        DirectX::XMMATRIX view = DirectX::XMMatrixLookAtLH({ 3, 0, 0 }, { 0, 0, 0 }, { 0, 0, 1 });
-        DirectX::XMMATRIX proj = DirectX::XMMatrixOrthographicLH(2.5f, 2.5f, 0.1f, 10.0f);
-        float clr[4] = { 0, 0, 0, 0 }; Context->ClearRenderTargetView(rtv.Get(), clr); Context->ClearDepthStencilView(dsv.Get(), D3D11_CLEAR_DEPTH, 1.0f, 0);
-        Context->OMSetRenderTargets(1, rtv.GetAddressOf(), dsv.Get());
-        ComPtr<ID3D11RasterizerState> NoCull; D3D11_RASTERIZER_DESC rd = { D3D11_FILL_SOLID, D3D11_CULL_NONE, FALSE, 0, 0.0f, 0.0f, TRUE, FALSE, FALSE, FALSE };
-        Device->CreateRasterizerState(&rd, &NoCull); Context->RSSetState(NoCull.Get()); Context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-        D3D11_MAPPED_SUBRESOURCE m;
-        if (SUCCEEDED(Context->Map(BakePerFrameBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &m))) { FPerFrameConstants pf = {}; DirectX::XMStoreFloat4x4(&pf.VP, view * proj); memcpy(m.pData, &pf, sizeof(pf)); Context->Unmap(BakePerFrameBuffer.Get(), 0); }
-        if (SUCCEEDED(Context->Map(MaterialBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &m))) { FMaterialConstants mc = { { 1, 1, 1, 1 } }; memcpy(m.pData, &mc, sizeof(mc)); Context->Unmap(MaterialBuffer.Get(), 0); }
-        Context->IASetInputLayout(InputLayout.Get()); Context->VSSetShader(VertexShader.Get(), nullptr, 0); Context->PSSetShader(PixelShader.Get(), nullptr, 0);
-        Context->VSSetConstantBuffers(0, 1, BakePerFrameBuffer.GetAddressOf()); Context->PSSetConstantBuffers(2, 1, MaterialBuffer.GetAddressOf()); Context->PSSetSamplers(0, 1, DiffuseSamplerState.GetAddressOf());
-        ID3D11ShaderResourceView* dsrv = res.DiffuseTextureView.Get(); Context->PSSetShaderResources(0, 1, &dsrv);
-        UINT s = sizeof(FMeshVertex), o = 0; Context->IASetVertexBuffers(0, 1, res.VertexBuffer.GetAddressOf(), &s, &o); Context->IASetIndexBuffer(res.IndexBuffer.Get(), DXGI_FORMAT_R32_UINT, 0);
-        for (int f = 0; f < 6; ++f)
-        {
-            // 4x2 아틀라스 레이아웃에 맞게 뷰포트 이동 (0~3은 윗줄, 4~5는 아랫줄)
-            D3D11_VIEWPORT vp = { (float)((f % 4) * 256), (float)((f / 4) * 256), 256.0f, 256.0f, 0, 1 };
-            Context->RSSetViewports(1, &vp);
-
-            D3D11_MAPPED_SUBRESOURCE m;
-            if (SUCCEEDED(Context->Map(BakePerObjectBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &m)))
-            {
-                DirectX::XMMATRIX rotMat;
-                if (f == 0)      rotMat = DirectX::XMMatrixIdentity();                             // Frame 0: +X면 (기본)
-                else if (f == 1) rotMat = DirectX::XMMatrixRotationZ(DirectX::XM_PIDIV2);          // Frame 1: -Y면 (Z축 +90도)
-                else if (f == 2) rotMat = DirectX::XMMatrixRotationZ(DirectX::XM_PI);              // Frame 2: -X면 (Z축 180도)
-                else if (f == 3) rotMat = DirectX::XMMatrixRotationZ(-DirectX::XM_PIDIV2);         // Frame 3: +Y면 (Z축 -90도)
-                else if (f == 4) rotMat = DirectX::XMMatrixRotationY(DirectX::XM_PIDIV2);          // Frame 4: +Z면 (윗면, Y축 +90도)
-                else             rotMat = DirectX::XMMatrixRotationY(-DirectX::XM_PIDIV2);         // Frame 5: -Z면 (아랫면, Y축 -90도)
-
-                DirectX::XMMATRIX objMat = DirectX::XMMatrixTranslation(-res.LocalCenter.x, -res.LocalCenter.y, -res.LocalCenter.z) * rotMat;
-
-                FPerObjectConstants po = {};
-                DirectX::XMMATRIX sm = DirectX::XMMatrixTranspose(objMat);
-                DirectX::XMStoreFloat4(&po.R0, sm.r[0]);
-                DirectX::XMStoreFloat4(&po.R1, sm.r[1]);
-                DirectX::XMStoreFloat4(&po.R2, sm.r[2]);
-                po.PD = { 0, 0, 0, 1 };
-
-                std::memcpy(m.pData, &po, sizeof(po));
-                Context->Unmap(BakePerObjectBuffer.Get(), 0);
-            }
-
-            Context->VSSetConstantBuffers(1, 1, BakePerObjectBuffer.GetAddressOf());
-            Context->DrawIndexed(res.IndexCount, 0, 0);
-        }
-        ImpostorResources[MeshID].SnapshotTexture = tex; ImpostorResources[MeshID].SnapshotSRV = srv; ImpostorResources[MeshID].bIsBaked = true;
-        ID3D11RenderTargetView* nrt = nullptr; Context->OMSetRenderTargets(1, &nrt, nullptr);
-    }
-
-    void URenderer::BeginFrame() {
-        float c[4] = { 0.03f, 0.03f, 0.06f, 1 }; Context->OMSetRenderTargets(1, MainRenderTargetView.GetAddressOf(), DepthStencilView.Get());
-        Context->ClearRenderTargetView(MainRenderTargetView.Get(), c); Context->ClearDepthStencilView(DepthStencilView.Get(), D3D11_CLEAR_DEPTH, 1, 0);
-        D3D11_VIEWPORT vp = { 0, 0, (float)ViewportWidth, (float)ViewportHeight, 0, 1 }; Context->RSSetViewports(1, &vp);
-    }
-
-    void URenderer::RenderScene(const Scene::USceneManager& InMgr) {
-        const Scene::FSceneDataSOA* sd = InMgr.GetSceneData(); if (!sd || sd->RenderCount == 0) return;
-        const uint32_t Aligned = 256, Bulk = sd->RenderCount * Aligned, Cap = 64 * 1024 * 1024;
-        D3D11_MAP type = (PerObjectRingBufferOffset + Bulk > Cap) ? D3D11_MAP_WRITE_DISCARD : D3D11_MAP_WRITE_NO_OVERWRITE;
-        if (type == D3D11_MAP_WRITE_DISCARD) PerObjectRingBufferOffset = 0;
-        D3D11_MAPPED_SUBRESOURCE m; if (FAILED(Context->Map(PerObjectBuffer.Get(), 0, type, 0, &m))) return;
-        uint8_t* dst = (uint8_t*)m.pData + PerObjectRingBufferOffset; uint32_t bo = PerObjectRingBufferOffset;
-        uint32_t gc[20] = { 0 }, go[20] = { 0 }, to[20];
-        for (uint32_t i = 0; i < sd->RenderCount; ++i) { uint32_t mid = sd->MeshIDs[sd->RenderQueue[i]]; if (mid < 20) gc[mid]++; }
-        uint32_t cur = 0; for (int i = 0; i < 20; ++i) { go[i] = cur; cur += gc[i]; }
-        memcpy(to, go, sizeof(go));
-        for (uint32_t i = 0; i < sd->RenderCount; ++i) {
-            uint32_t oid = sd->RenderQueue[i], mid = sd->MeshIDs[oid]; if (mid >= 20) continue;
-            uint32_t sidx = to[mid]++; const auto& mat = sd->WorldMatrices[oid];
-            FPerObjectConstants* d = (FPerObjectConstants*)(dst + (sidx * Aligned));
-            DirectX::XMStoreFloat4(&d->R0, mat.Row0); DirectX::XMStoreFloat4(&d->R1, mat.Row1); DirectX::XMStoreFloat4(&d->R2, mat.Row2);
-            d->PD = { MeshResources[mid % 2].LocalCenter.x, MeshResources[mid % 2].LocalCenter.y, MeshResources[mid % 2].LocalCenter.z, 1 };
-        }
-        Context->Unmap(PerObjectBuffer.Get(), 0); PerObjectRingBufferOffset += Bulk;
-        float aspect = (ViewportHeight == 0) ? 1 : (float)ViewportWidth / ViewportHeight;
-        DirectX::XMVECTOR cp = DirectX::XMLoadFloat3(&CameraState.Position);
-        DirectX::XMVECTOR fwd = DirectX::XMVector3Normalize(DirectX::XMVectorSet(cos(CameraState.PitchRadians) * cos(CameraState.YawRadians), cos(CameraState.PitchRadians) * sin(CameraState.YawRadians), sin(CameraState.PitchRadians), 0));
-        DirectX::XMMATRIX view = DirectX::XMMatrixLookAtLH(cp, DirectX::XMVectorAdd(cp, fwd), { 0, 0, 1 });
-        DirectX::XMMATRIX proj = DirectX::XMMatrixPerspectiveFovLH(DirectX::XMConvertToRadians(CameraState.FOVDegrees), aspect, CameraState.NearClip, CameraState.FarClip);
-        if (SUCCEEDED(Context->Map(PerFrameBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &m))) { FPerFrameConstants pf = {}; DirectX::XMStoreFloat4x4(&pf.VP, view * proj); DirectX::XMStoreFloat4(&pf.CR, XMMatrixTranspose(view).r[0]); DirectX::XMStoreFloat4(&pf.CU, XMMatrixTranspose(view).r[1]); DirectX::XMStoreFloat4(&pf.CP, cp); memcpy(m.pData, &pf, sizeof(pf)); Context->Unmap(PerFrameBuffer.Get(), 0); }
-        if (SUCCEEDED(Context->Map(MaterialBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &m))) { FMaterialConstants mc = { { 1, 1, 1, 1 } }; memcpy(m.pData, &mc, sizeof(mc)); Context->Unmap(MaterialBuffer.Get(), 0); }
-        Context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
-        Context->VSSetConstantBuffers(0, 1, PerFrameBuffer.GetAddressOf()); Context->PSSetConstantBuffers(0, 1, PerFrameBuffer.GetAddressOf());
-        Context->PSSetConstantBuffers(2, 1, MaterialBuffer.GetAddressOf()); Context->PSSetSamplers(0, 1, DiffuseSamplerState.GetAddressOf());
-        Context->RSSetState(DefaultRasterizerState.Get()); Context->OMSetDepthStencilState(DefaultDepthStencilState.Get(), 0);
-        Context->IASetInputLayout(InputLayout.Get()); Context->VSSetShader(VertexShader.Get(), nullptr, 0); Context->PSSetShader(PixelShader.Get(), nullptr, 0);
-        for (uint32_t mid = 0; mid < 2; ++mid) {
-            if (gc[mid] == 0) continue;
-            auto& r = MeshResources[mid]; Context->PSSetShaderResources(0, 1, r.DiffuseTextureView.GetAddressOf());
-            UINT s = sizeof(FMeshVertex), o = 0; Context->IASetVertexBuffers(0, 1, r.VertexBuffer.GetAddressOf(), &s, &o); Context->IASetIndexBuffer(r.IndexBuffer.Get(), DXGI_FORMAT_R32_UINT, 0);
-            for (uint32_t i = go[mid]; i < go[mid] + gc[mid]; ++i) { UINT off = (bo + (i * Aligned)) / 16, cnt = Aligned / 16; if (Context1) Context1->VSSetConstantBuffers1(1, 1, PerObjectBuffer.GetAddressOf(), &off, &cnt); else Context->VSSetConstantBuffers(1, 1, PerObjectBuffer.GetAddressOf()); Context->DrawIndexed(r.IndexCount, 0, 0); }
-        }
-        Context->IASetInputLayout(BillboardLayout.Get()); Context->VSSetShader(BillboardVS.Get(), nullptr, 0); Context->PSSetShader(BillboardPS.Get(), nullptr, 0);
-        for (uint32_t mid = 0; mid < 2; ++mid) {
-            uint32_t bid = mid + 10; if (gc[bid] == 0 || !ImpostorResources[mid].bIsBaked) continue;
-            Context->PSSetShaderResources(0, 1, ImpostorResources[mid].SnapshotSRV.GetAddressOf());
-            UINT s = sizeof(FBillboardVertex), o = 0; Context->IASetVertexBuffers(0, 1, BillboardVB.GetAddressOf(), &s, &o); Context->IASetIndexBuffer(BillboardIB.Get(), DXGI_FORMAT_R32_UINT, 0);
-            for (uint32_t i = go[bid]; i < go[bid] + gc[bid]; ++i) { UINT off = (bo + (i * Aligned)) / 16, cnt = Aligned / 16; if (Context1) { Context1->VSSetConstantBuffers1(1, 1, PerObjectBuffer.GetAddressOf(), &off, &cnt); Context1->PSSetConstantBuffers1(1, 1, PerObjectBuffer.GetAddressOf(), &off, &cnt); } else { Context->VSSetConstantBuffers(1, 1, PerObjectBuffer.GetAddressOf()); Context->PSSetConstantBuffers(1, 1, PerObjectBuffer.GetAddressOf()); } Context->DrawIndexed(6, 0, 0); }
-        }
-    }
-
-    void URenderer::EndFrame() { SwapChain->Present(0, DXGI_PRESENT_ALLOW_TEARING); }
+    D3DCompile(BBShader, strlen(BBShader), nullptr, nullptr, nullptr, "VSMain", "vs_5_0", 0, 0, &VS, &Err);
+    D3DCompile(BBShader, strlen(BBShader), nullptr, nullptr, nullptr, "PSMain", "ps_5_0", 0, 0, &PS, &Err);
+    Device->CreateVertexShader(VS->GetBufferPointer(), VS->GetBufferSize(), nullptr, &BillboardVS);
+    Device->CreatePixelShader(PS->GetBufferPointer(), PS->GetBufferSize(), nullptr, &BillboardPS);
+    D3D11_INPUT_ELEMENT_DESC bbl[] = {
+        {"POSITION", 0, DXGI_FORMAT_R32G32B32_FLOAT, 0, 0, D3D11_INPUT_PER_VERTEX_DATA, 0},
+        {"TEXCOORD", 0, DXGI_FORMAT_R32G32_FLOAT, 0, 12, D3D11_INPUT_PER_VERTEX_DATA, 0}};
+    Device->CreateInputLayout(bbl, 2, VS->GetBufferPointer(), VS->GetBufferSize(), &BillboardLayout);
+    FBillboardVertex bbv[] = {
+        {{-0.5f, 0, 0.5f}, {0, 0}}, {{0.5f, 0, 0.5f}, {1, 0}}, {{-0.5f, 0, -0.5f}, {0, 1}}, {{0.5f, 0, -0.5f}, {1, 1}}};
+    D3D11_BUFFER_DESC bvb = {sizeof(bbv), D3D11_USAGE_DEFAULT, D3D11_BIND_VERTEX_BUFFER, 0, 0, 0};
+    D3D11_SUBRESOURCE_DATA bvd = {bbv, 0, 0};
+    Device->CreateBuffer(&bvb, &bvd, &BillboardVB);
+    uint32_t bbi[] = {0, 1, 2, 2, 1, 3};
+    D3D11_BUFFER_DESC bib = {sizeof(bbi), D3D11_USAGE_DEFAULT, D3D11_BIND_INDEX_BUFFER, 0, 0, 0};
+    D3D11_SUBRESOURCE_DATA bid = {bbi, 0, 0};
+    Device->CreateBuffer(&bib, &bid, &BillboardIB);
+    BakeImpostor(0);
+    BakeImpostor(1);
+    return true;
 }
+
+void URenderer::BakeImpostor(uint32_t MeshID)
+{
+    const FMeshResource& res = MeshResources[MeshID];
+    if (res.SourceVertices.empty())
+        return;
+    D3D11_TEXTURE2D_DESC td = {1024,
+                               512,
+                               1,
+                               1,
+                               DXGI_FORMAT_R8G8B8A8_UNORM,
+                               {1, 0},
+                               D3D11_USAGE_DEFAULT,
+                               D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE,
+                               0,
+                               0};
+    ComPtr<ID3D11Texture2D> tex;
+    Device->CreateTexture2D(&td, nullptr, &tex);
+    ComPtr<ID3D11RenderTargetView> rtv;
+    Device->CreateRenderTargetView(tex.Get(), nullptr, &rtv);
+    ComPtr<ID3D11ShaderResourceView> srv;
+    Device->CreateShaderResourceView(tex.Get(), nullptr, &srv);
+    D3D11_TEXTURE2D_DESC dd = {
+        1024, 512, 1, 1, DXGI_FORMAT_D24_UNORM_S8_UINT, {1, 0}, D3D11_USAGE_DEFAULT, D3D11_BIND_DEPTH_STENCIL, 0, 0};
+    ComPtr<ID3D11Texture2D> dtx;
+    Device->CreateTexture2D(&dd, nullptr, &dtx);
+    ComPtr<ID3D11DepthStencilView> dsv;
+    Device->CreateDepthStencilView(dtx.Get(), nullptr, &dsv);
+    DirectX::XMMATRIX view = DirectX::XMMatrixLookAtLH({3, 0, 0}, {0, 0, 0}, {0, 0, 1});
+    DirectX::XMMATRIX proj = DirectX::XMMatrixOrthographicLH(2.5f, 2.5f, 0.1f, 10.0f);
+    float clr[4] = {0, 0, 0, 0};
+    Context->ClearRenderTargetView(rtv.Get(), clr);
+    Context->ClearDepthStencilView(dsv.Get(), D3D11_CLEAR_DEPTH, 1.0f, 0);
+    Context->OMSetRenderTargets(1, rtv.GetAddressOf(), dsv.Get());
+    ComPtr<ID3D11RasterizerState> NoCull;
+    D3D11_RASTERIZER_DESC rd = {D3D11_FILL_SOLID, D3D11_CULL_NONE, FALSE, 0, 0.0f, 0.0f, TRUE, FALSE, FALSE, FALSE};
+    Device->CreateRasterizerState(&rd, &NoCull);
+    Context->RSSetState(NoCull.Get());
+    Context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    D3D11_MAPPED_SUBRESOURCE m;
+    if (SUCCEEDED(Context->Map(BakePerFrameBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &m)))
+    {
+        FPerFrameConstants pf = {};
+        DirectX::XMStoreFloat4x4(&pf.VP, view * proj);
+        memcpy(m.pData, &pf, sizeof(pf));
+        Context->Unmap(BakePerFrameBuffer.Get(), 0);
+    }
+    if (SUCCEEDED(Context->Map(MaterialBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &m)))
+    {
+        FMaterialConstants mc = {{1, 1, 1, 1}};
+        memcpy(m.pData, &mc, sizeof(mc));
+        Context->Unmap(MaterialBuffer.Get(), 0);
+    }
+    Context->IASetInputLayout(InputLayout.Get());
+    Context->VSSetShader(VertexShader.Get(), nullptr, 0);
+    Context->PSSetShader(PixelShader.Get(), nullptr, 0);
+    Context->VSSetConstantBuffers(0, 1, BakePerFrameBuffer.GetAddressOf());
+    Context->PSSetConstantBuffers(2, 1, MaterialBuffer.GetAddressOf());
+    Context->PSSetSamplers(0, 1, DiffuseSamplerState.GetAddressOf());
+    ID3D11ShaderResourceView* dsrv = res.DiffuseTextureView.Get();
+    Context->PSSetShaderResources(0, 1, &dsrv);
+    UINT s = sizeof(FMeshVertex), o = 0;
+    Context->IASetVertexBuffers(0, 1, res.VertexBuffer.GetAddressOf(), &s, &o);
+    Context->IASetIndexBuffer(res.IndexBuffer.Get(), DXGI_FORMAT_R32_UINT, 0);
+    for (int f = 0; f < 6; ++f)
+    {
+        // 4x2 아틀라스 레이아웃에 맞게 뷰포트 이동 (0~3은 윗줄, 4~5는 아랫줄)
+        D3D11_VIEWPORT vp = {(float)((f % 4) * 256), (float)((f / 4) * 256), 256.0f, 256.0f, 0, 1};
+        Context->RSSetViewports(1, &vp);
+
+        D3D11_MAPPED_SUBRESOURCE m;
+        if (SUCCEEDED(Context->Map(BakePerObjectBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &m)))
+        {
+            DirectX::XMMATRIX rotMat;
+            if (f == 0)
+                rotMat = DirectX::XMMatrixIdentity(); // Frame 0: +X면 (기본)
+            else if (f == 1)
+                rotMat = DirectX::XMMatrixRotationZ(DirectX::XM_PIDIV2); // Frame 1: -Y면 (Z축 +90도)
+            else if (f == 2)
+                rotMat = DirectX::XMMatrixRotationZ(DirectX::XM_PI); // Frame 2: -X면 (Z축 180도)
+            else if (f == 3)
+                rotMat = DirectX::XMMatrixRotationZ(-DirectX::XM_PIDIV2); // Frame 3: +Y면 (Z축 -90도)
+            else if (f == 4)
+                rotMat = DirectX::XMMatrixRotationY(DirectX::XM_PIDIV2); // Frame 4: +Z면 (윗면, Y축 +90도)
+            else
+                rotMat = DirectX::XMMatrixRotationY(-DirectX::XM_PIDIV2); // Frame 5: -Z면 (아랫면, Y축 -90도)
+
+            DirectX::XMMATRIX objMat =
+                DirectX::XMMatrixTranslation(-res.LocalCenter.x, -res.LocalCenter.y, -res.LocalCenter.z) * rotMat;
+
+            FPerObjectConstants po = {};
+            DirectX::XMMATRIX sm = DirectX::XMMatrixTranspose(objMat);
+            DirectX::XMStoreFloat4(&po.R0, sm.r[0]);
+            DirectX::XMStoreFloat4(&po.R1, sm.r[1]);
+            DirectX::XMStoreFloat4(&po.R2, sm.r[2]);
+            po.PD = {0, 0, 0, 1};
+
+            std::memcpy(m.pData, &po, sizeof(po));
+            Context->Unmap(BakePerObjectBuffer.Get(), 0);
+        }
+
+        Context->VSSetConstantBuffers(1, 1, BakePerObjectBuffer.GetAddressOf());
+        Context->DrawIndexed(res.IndexCount, 0, 0);
+    }
+    ImpostorResources[MeshID].SnapshotTexture = tex;
+    ImpostorResources[MeshID].SnapshotSRV = srv;
+    ImpostorResources[MeshID].bIsBaked = true;
+    ID3D11RenderTargetView* nrt = nullptr;
+    Context->OMSetRenderTargets(1, &nrt, nullptr);
+}
+
+void URenderer::BeginFrame()
+{
+    float c[4] = {0.03f, 0.03f, 0.06f, 1};
+    Context->OMSetRenderTargets(1, MainRenderTargetView.GetAddressOf(), DepthStencilView.Get());
+    Context->ClearRenderTargetView(MainRenderTargetView.Get(), c);
+    Context->ClearDepthStencilView(DepthStencilView.Get(), D3D11_CLEAR_DEPTH, 1, 0);
+    D3D11_VIEWPORT vp = {0, 0, (float)ViewportWidth, (float)ViewportHeight, 0, 1};
+    Context->RSSetViewports(1, &vp);
+}
+
+void URenderer::RenderScene(const Scene::USceneManager& InMgr)
+{
+    const Scene::FSceneDataSOA* sd = InMgr.GetSceneData();
+    if (!sd || sd->RenderCount == 0)
+        return;
+    const uint32_t Aligned = 256, Bulk = sd->RenderCount * Aligned, Cap = 64 * 1024 * 1024;
+    D3D11_MAP type = (PerObjectRingBufferOffset + Bulk > Cap) ? D3D11_MAP_WRITE_DISCARD : D3D11_MAP_WRITE_NO_OVERWRITE;
+    if (type == D3D11_MAP_WRITE_DISCARD)
+        PerObjectRingBufferOffset = 0;
+    D3D11_MAPPED_SUBRESOURCE m;
+    if (FAILED(Context->Map(PerObjectBuffer.Get(), 0, type, 0, &m)))
+        return;
+    uint8_t* dst = (uint8_t*)m.pData + PerObjectRingBufferOffset;
+    uint32_t bo = PerObjectRingBufferOffset;
+    uint32_t gc[20] = {0}, go[20] = {0}, to[20];
+    for (uint32_t i = 0; i < sd->RenderCount; ++i)
+    {
+        uint32_t mid = sd->MeshIDs[sd->RenderQueue[i]];
+        if (mid < 20)
+            gc[mid]++;
+    }
+    uint32_t cur = 0;
+    for (int i = 0; i < 20; ++i)
+    {
+        go[i] = cur;
+        cur += gc[i];
+    }
+    memcpy(to, go, sizeof(go));
+    for (uint32_t i = 0; i < sd->RenderCount; ++i)
+    {
+        uint32_t oid = sd->RenderQueue[i], mid = sd->MeshIDs[oid];
+        if (mid >= 20)
+            continue;
+        uint32_t sidx = to[mid]++;
+        const auto& mat = sd->WorldMatrices[oid];
+        FPerObjectConstants* d = (FPerObjectConstants*)(dst + (sidx * Aligned));
+        DirectX::XMStoreFloat4(&d->R0, mat.Row0);
+        DirectX::XMStoreFloat4(&d->R1, mat.Row1);
+        DirectX::XMStoreFloat4(&d->R2, mat.Row2);
+        d->PD = {MeshResources[mid % 2].LocalCenter.x, MeshResources[mid % 2].LocalCenter.y,
+                 MeshResources[mid % 2].LocalCenter.z, 1};
+    }
+    Context->Unmap(PerObjectBuffer.Get(), 0);
+    PerObjectRingBufferOffset += Bulk;
+    float aspect = (ViewportHeight == 0) ? 1 : (float)ViewportWidth / ViewportHeight;
+    DirectX::XMVECTOR cp = DirectX::XMLoadFloat3(&CameraState.Position);
+    DirectX::XMVECTOR fwd = DirectX::XMVector3Normalize(DirectX::XMVectorSet(
+        cos(CameraState.PitchRadians) * cos(CameraState.YawRadians),
+        cos(CameraState.PitchRadians) * sin(CameraState.YawRadians), sin(CameraState.PitchRadians), 0));
+    DirectX::XMMATRIX view = DirectX::XMMatrixLookAtLH(cp, DirectX::XMVectorAdd(cp, fwd), {0, 0, 1});
+    DirectX::XMMATRIX proj = DirectX::XMMatrixPerspectiveFovLH(DirectX::XMConvertToRadians(CameraState.FOVDegrees),
+                                                               aspect, CameraState.NearClip, CameraState.FarClip);
+    if (SUCCEEDED(Context->Map(PerFrameBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &m)))
+    {
+        FPerFrameConstants pf = {};
+        DirectX::XMStoreFloat4x4(&pf.VP, view * proj);
+        DirectX::XMStoreFloat4(&pf.CR, XMMatrixTranspose(view).r[0]);
+        DirectX::XMStoreFloat4(&pf.CU, XMMatrixTranspose(view).r[1]);
+        DirectX::XMStoreFloat4(&pf.CP, cp);
+        memcpy(m.pData, &pf, sizeof(pf));
+        Context->Unmap(PerFrameBuffer.Get(), 0);
+    }
+    if (SUCCEEDED(Context->Map(MaterialBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &m)))
+    {
+        FMaterialConstants mc = {{1, 1, 1, 1}};
+        memcpy(m.pData, &mc, sizeof(mc));
+        Context->Unmap(MaterialBuffer.Get(), 0);
+    }
+    Context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLELIST);
+    Context->VSSetConstantBuffers(0, 1, PerFrameBuffer.GetAddressOf());
+    Context->PSSetConstantBuffers(0, 1, PerFrameBuffer.GetAddressOf());
+    Context->PSSetConstantBuffers(2, 1, MaterialBuffer.GetAddressOf());
+    Context->PSSetSamplers(0, 1, DiffuseSamplerState.GetAddressOf());
+    Context->RSSetState(DefaultRasterizerState.Get());
+    Context->OMSetDepthStencilState(DefaultDepthStencilState.Get(), 0);
+    Context->IASetInputLayout(InputLayout.Get());
+    Context->VSSetShader(VertexShader.Get(), nullptr, 0);
+    Context->PSSetShader(PixelShader.Get(), nullptr, 0);
+    for (uint32_t mid = 0; mid < 2; ++mid)
+    {
+        if (gc[mid] == 0)
+            continue;
+        auto& r = MeshResources[mid];
+        Context->PSSetShaderResources(0, 1, r.DiffuseTextureView.GetAddressOf());
+        UINT s = sizeof(FMeshVertex), o = 0;
+        Context->IASetVertexBuffers(0, 1, r.VertexBuffer.GetAddressOf(), &s, &o);
+        Context->IASetIndexBuffer(r.IndexBuffer.Get(), DXGI_FORMAT_R32_UINT, 0);
+        for (uint32_t i = go[mid]; i < go[mid] + gc[mid]; ++i)
+        {
+            UINT off = (bo + (i * Aligned)) / 16, cnt = Aligned / 16;
+            if (Context1)
+                Context1->VSSetConstantBuffers1(1, 1, PerObjectBuffer.GetAddressOf(), &off, &cnt);
+            else
+                Context->VSSetConstantBuffers(1, 1, PerObjectBuffer.GetAddressOf());
+            Context->DrawIndexed(r.IndexCount, 0, 0);
+        }
+    }
+    Context->IASetInputLayout(BillboardLayout.Get());
+    Context->VSSetShader(BillboardVS.Get(), nullptr, 0);
+    Context->PSSetShader(BillboardPS.Get(), nullptr, 0);
+    for (uint32_t mid = 0; mid < 2; ++mid)
+    {
+        uint32_t bid = mid + 10;
+        if (gc[bid] == 0 || !ImpostorResources[mid].bIsBaked)
+            continue;
+        Context->PSSetShaderResources(0, 1, ImpostorResources[mid].SnapshotSRV.GetAddressOf());
+        UINT s = sizeof(FBillboardVertex), o = 0;
+        Context->IASetVertexBuffers(0, 1, BillboardVB.GetAddressOf(), &s, &o);
+        Context->IASetIndexBuffer(BillboardIB.Get(), DXGI_FORMAT_R32_UINT, 0);
+        for (uint32_t i = go[bid]; i < go[bid] + gc[bid]; ++i)
+        {
+            UINT off = (bo + (i * Aligned)) / 16, cnt = Aligned / 16;
+            if (Context1)
+            {
+                Context1->VSSetConstantBuffers1(1, 1, PerObjectBuffer.GetAddressOf(), &off, &cnt);
+                Context1->PSSetConstantBuffers1(1, 1, PerObjectBuffer.GetAddressOf(), &off, &cnt);
+            }
+            else
+            {
+                Context->VSSetConstantBuffers(1, 1, PerObjectBuffer.GetAddressOf());
+                Context->PSSetConstantBuffers(1, 1, PerObjectBuffer.GetAddressOf());
+            }
+            Context->DrawIndexed(6, 0, 0);
+        }
+    }
+}
+
+void URenderer::EndFrame()
+{
+    SwapChain->Present(0, DXGI_PRESENT_ALLOW_TEARING);
+}
+} // namespace Graphics
