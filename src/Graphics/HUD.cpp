@@ -142,58 +142,79 @@ namespace Graphics
         ScreenHeight = InScreenHeight;
         BatchedVertices.clear();
 
+        static float UpdateTimer = 0.1f;
+        static float UpdateTimer2 = 0.05f;
+        static char Buffer6[256] = "FPS: ...";
+        static char Buffer7[256] = "FPS: ...";
+
         char Buffer[256];
         char Buffer2[256];
         char Buffer3[256];
         char Buffer4[256];
         char Buffer5[256];
 
-        float FrameMS = (InMetrics.FramesPerSecond > 0.0f) ? (1000.0f / InMetrics.FramesPerSecond) : 0.0f;
+        float DeltaTime = (InMetrics.FramesPerSecond > 0.0f) ? (1.0f / InMetrics.FramesPerSecond) : 0.016f;
+        UpdateTimer += DeltaTime;
+        UpdateTimer2 += DeltaTime;
+
+        if (UpdateTimer >= 0.05f)
+        {
+            float FrameMS = (InMetrics.FramesPerSecond > 0.0f) ? (1000.0f / InMetrics.FramesPerSecond) : 0.0f;
+            std::snprintf(Buffer6, sizeof(Buffer6), "FPS: %.3f(%.3fms)", InMetrics.FramesPerSecond, FrameMS);
+            UpdateTimer = 0.0f;
+        }
+        static char Buffer8[256] = "";
+        static char Buffer9[256] = "";
+
+        if (UpdateTimer2 >= 0.5f)
+        {
+            float FrameMS = (InMetrics.FramesPerSecond > 0.0f) ? (1000.0f / InMetrics.FramesPerSecond) : 0.0f;
+            std::snprintf(Buffer7, sizeof(Buffer7), "FPS: %.3f(%.3fms)", InMetrics.FramesPerSecond, FrameMS);
+
+            std::snprintf(Buffer8, sizeof(Buffer8), "Split=%.2f  Prepass=%.2f  HiZ=%.2f  Cull=%.2f  Draw=%.2f",
+                          InMetrics.SplitTime, InMetrics.PrepassTime, InMetrics.HiZTime, InMetrics.CullTime,
+                          InMetrics.DrawTime);
+
+            UpdateTimer2 = 0.0f;
+        }
 
         double LastPickingMS = Core::FPlatformTime::ToMilliseconds(InMetrics.LastPickingCycles);
         double TotalPickingMS = Core::FPlatformTime::ToMilliseconds(InMetrics.TotalPickingCycles);
-        // Grid Picking Stats
+
         double GLastMS = Core::FPlatformTime::ToMilliseconds(InMetrics.GridLastPickingCycles);
         double GTotalMS = Core::FPlatformTime::ToMilliseconds(InMetrics.GridTotalPickingCycles);
-        double GAvgMS = (InMetrics.GridTotalPickCount > 0) ? (GTotalMS / static_cast<double>(InMetrics.GridTotalPickCount)) : 0.0;
+        double GAvgMS =
+            (InMetrics.GridTotalPickCount > 0) ? (GTotalMS / static_cast<double>(InMetrics.GridTotalPickCount)) : 0.0;
 
-        // BVH Picking Stats
         double BLastMS = Core::FPlatformTime::ToMilliseconds(InMetrics.BVHLastPickingCycles);
         double BTotalMS = Core::FPlatformTime::ToMilliseconds(InMetrics.BVHTotalPickingCycles);
-        double BAvgMS = (InMetrics.BVHTotalPickCount > 0) ? (BTotalMS / static_cast<double>(InMetrics.BVHTotalPickCount)) : 0.0;
+        double BAvgMS =
+            (InMetrics.BVHTotalPickCount > 0) ? (BTotalMS / static_cast<double>(InMetrics.BVHTotalPickCount)) : 0.0;
 
         const char* StructureName = (InMetrics.CurrentStructure == Core::ESpatialStructure::UniformGrid) ? "Grid" : "BVH";
 
-        std::snprintf(Buffer, sizeof(Buffer),
-            "FPS: %.1f(%.1fms) Picking Time %.4fms, RenderObjects: %u",
-            InMetrics.FramesPerSecond,
-            FrameMS,
-            LastPickingMS,
-            InMetrics.RenderedObjectCount);
+        std::snprintf(Buffer9, sizeof(Buffer9), "DrawCount: %u  PrevVisible=%u  PrevInvisible=%u  Total=%u",
+                      InMetrics.DrawCount, InMetrics.PrevVisible, InMetrics.PrevInvisible, InMetrics.TotalObjectsCount);
+        std::snprintf(Buffer, sizeof(Buffer), "[%s Mode] Picking Time %.4fms, RenderObjects: %u", StructureName, LastPickingMS,
+                      InMetrics.RenderedObjectCount);
+        std::snprintf(Buffer4, sizeof(Buffer4), "Grid Pick -> Last:%.4fms Avg:%.4fms Total:%.2fms (Cnt:%llu)", GLastMS,
+                      GAvgMS, GTotalMS, (unsigned long long)InMetrics.GridTotalPickCount);
+        std::snprintf(Buffer5, sizeof(Buffer5), "BVH  Pick -> Last:%.4fms Avg:%.4fms Total:%.2fms (Cnt:%llu)", BLastMS,
+                      BAvgMS, BTotalMS, (unsigned long long)InMetrics.BVHTotalPickCount);
+        std::snprintf(Buffer2, sizeof(Buffer2), "BVH Tests  -> Nodes: %u, Objects: %u", InMetrics.BVHNodeTestCount,
+                      InMetrics.ObjectAABBTestCount);
+        std::snprintf(Buffer3, sizeof(Buffer3), "Grid Tests -> Cells: %u, Objects: %u", InMetrics.GridCellTestCount,
+                      InMetrics.GridObjectAABBTestCount);
 
-        std::snprintf(Buffer4, sizeof(Buffer4),
-            "Grid Pick -> Last:%.4fms Avg:%.4fms Total:%.2fms (Cnt:%llu)",
-            GLastMS, GAvgMS, GTotalMS, (unsigned long long)InMetrics.GridTotalPickCount);
-
-        std::snprintf(Buffer5, sizeof(Buffer5),
-            "BVH  Pick -> Last:%.4fms Avg:%.4fms Total:%.2fms (Cnt:%llu)",
-            BLastMS, BAvgMS, BTotalMS, (unsigned long long)InMetrics.BVHTotalPickCount);
-
-        std::snprintf(Buffer2, sizeof(Buffer2),
-            "BVH Tests  -> Nodes: %u, Objects: %u",
-            InMetrics.BVHNodeTestCount,
-            InMetrics.ObjectAABBTestCount);
-
-        std::snprintf(Buffer3, sizeof(Buffer3),
-            "Grid Tests -> Cells: %u, Objects: %u",
-            InMetrics.GridCellTestCount,
-            InMetrics.GridObjectAABBTestCount);
-
-        BatchText(Buffer,  10.0f, 10.0f);
-        BatchText(Buffer4, 10.0f, 35.0f);
-        BatchText(Buffer5, 10.0f, 60.0f);
-        BatchText(Buffer2, 10.0f, 85.0f);
-        BatchText(Buffer3, 10.0f, 110.0f);
+        BatchText(Buffer6, 10.0f, 10.0f);
+        BatchText(Buffer7, 10.0f, 30.0f); 
+        BatchText(Buffer, 10.0f, 50.0f);  
+        BatchText(Buffer4, 10.0f, 75.0f);
+        BatchText(Buffer5, 10.0f, 100.0f);
+        BatchText(Buffer2, 10.0f, 125.0f);
+        BatchText(Buffer3, 10.0f, 150.0f);
+        BatchText(Buffer8, 10.0f, 175.0f);
+        BatchText(Buffer9, 10.0f, 200.0f);
     }
 
     void FHUD::Render()
