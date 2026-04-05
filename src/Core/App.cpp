@@ -237,6 +237,8 @@ bool UApp::Initialize(HINSTANCE InHInstance, int InCmdShow)
         SceneManager->SpawnStaticMeshGrid(GridReq);
     }
 
+    Core::GPerformanceMetrics.CurrentStructure = SceneManager->DetermineOptimalStructure();
+
     FitCameraToScene(*SceneManager, CameraState, ScreenWidth, ScreenHeight);
     Renderer->SetCameraState(CameraState);
 

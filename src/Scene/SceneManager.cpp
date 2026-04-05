@@ -36,6 +36,55 @@ namespace Scene
         if (SceneData) SceneBVH.Build(*SceneData);
     }
 
+    Core::ESpatialStructure USceneManager::DetermineOptimalStructure() const
+    {
+        if (!SceneData || SceneData->TotalObjectCount == 0)
+            return Core::ESpatialStructure::SceneBVH;
+
+        float SceneMinX = (std::numeric_limits<float>::max)();
+        float SceneMinY = (std::numeric_limits<float>::max)();
+        float SceneMinZ = (std::numeric_limits<float>::max)();
+        float SceneMaxX = std::numeric_limits<float>::lowest();
+        float SceneMaxY = std::numeric_limits<float>::lowest();
+        float SceneMaxZ = std::numeric_limits<float>::lowest();
+
+        float MaxObjectExtent = 0.0f;
+        float TotalObjectVolume = 0.0f;
+
+        for (uint32_t i = 0; i < SceneData->TotalObjectCount; ++i)
+        {
+            SceneMinX = (std::min)(SceneMinX, SceneData->MinX[i]);
+            SceneMinY = (std::min)(SceneMinY, SceneData->MinY[i]);
+            SceneMinZ = (std::min)(SceneMinZ, SceneData->MinZ[i]);
+            SceneMaxX = (std::max)(SceneMaxX, SceneData->MaxX[i]);
+            SceneMaxY = (std::max)(SceneMaxY, SceneData->MaxY[i]);
+            SceneMaxZ = (std::max)(SceneMaxZ, SceneData->MaxZ[i]);
+
+            float ExtentX = SceneData->MaxX[i] - SceneData->MinX[i];
+            float ExtentY = SceneData->MaxY[i] - SceneData->MinY[i];
+            float ExtentZ = SceneData->MaxZ[i] - SceneData->MinZ[i];
+            MaxObjectExtent = (std::max)({ MaxObjectExtent, ExtentX, ExtentY, ExtentZ });
+            TotalObjectVolume += (ExtentX * ExtentY * ExtentZ);
+        }
+
+        float SceneSizeX = SceneMaxX - SceneMinX;
+        float SceneSizeY = SceneMaxY - SceneMinY;
+        float SceneSizeZ = SceneMaxZ - SceneMinZ;
+
+        // 크기 편차
+        float MaxSceneExtent = (std::max)({ SceneSizeX, SceneSizeY, SceneSizeZ });
+        if (MaxObjectExtent > MaxSceneExtent * 0.1f) { return Core::ESpatialStructure::SceneBVH; }
+
+        float SceneVolume = SceneSizeX * SceneSizeY * SceneSizeZ;
+        float VolumePerObject = SceneVolume / static_cast<float>(SceneData->TotalObjectCount);
+        float AverageObjectVolume = TotalObjectVolume / static_cast<float>(SceneData->TotalObjectCount);
+
+        float SparsityRatio = (AverageObjectVolume > 0.0001f) ? (VolumePerObject / AverageObjectVolume) : 1000.0f;
+        if (VolumePerObject > 30.0f) { return Core::ESpatialStructure::SceneBVH; }
+
+        return Core::ESpatialStructure::UniformGrid;
+    }
+
     void USceneManager::ResetScene()
     {
 		if (!SceneData) return;

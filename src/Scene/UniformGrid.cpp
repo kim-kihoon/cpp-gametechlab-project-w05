@@ -266,16 +266,6 @@ namespace Scene
                             {
                                 continue;
                             }
-                            /*if (Frustum.TestBox(
-                                SceneData->MinX[Index],
-                                SceneData->MinY[Index],
-                                SceneData->MinZ[Index],
-                                SceneData->MaxX[Index],
-                                SceneData->MaxY[Index],
-                                SceneData->MaxZ[Index]) == Math::ECullingResult::Outside)
-                            {
-                                continue;
-                            }*/
 
                             VisitTokens[Index] = CurrentVisitToken;
                             if (OutCount < MaxCapacity)

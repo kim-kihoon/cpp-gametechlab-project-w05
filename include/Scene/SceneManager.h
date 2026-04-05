@@ -59,6 +59,8 @@ namespace Scene
 
         void BuildSceneBVH();
 
+        Core::ESpatialStructure DetermineOptimalStructure() const;
+
     private:
         void ResetSelectionState();
 
