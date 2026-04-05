@@ -42,6 +42,8 @@ namespace Scene
                 Bounds.Expand({ SceneData->MaxX[ObjIdx], SceneData->MaxY[ObjIdx], SceneData->MaxZ[ObjIdx] });
             }
             Nodes[State.NodeIndex].Bounds = Bounds;
+            Nodes[State.NodeIndex].ObjectIndex = 0;
+            Nodes[State.NodeIndex].ObjectCount = 0;
 
             if (State.ObjCount <= 16) // Max 16 objects per leaf
             {
@@ -108,6 +110,7 @@ namespace Scene
             const FSceneBVHNode& Node = Nodes[NodeIdx];
 
             Math::ECullingResult Result = Frustum.TestBox(Node.Bounds);
+
             if (Result == Math::ECullingResult::Outside) continue;
 
             if (Result == Math::ECullingResult::FullyInside)
@@ -127,7 +130,7 @@ namespace Scene
                     {
                         for (uint32_t i = 0; i < SNode.ObjectCount; ++i)
                         {
-                            uint32_t ObjIdx = ObjectIndices[Node.ObjectIndex + i];
+                            uint32_t ObjIdx = ObjectIndices[SNode.ObjectIndex + i];
 
                             // 오브젝트 단위 Sphere Culling ---
                             if (Frustum.TestSphere(

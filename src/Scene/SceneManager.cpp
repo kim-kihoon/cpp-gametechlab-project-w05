@@ -44,7 +44,7 @@ namespace Scene
 		SceneData->IsVisible.fill(false);
 		ResetSelectionState();
         if (Grid) Grid->BuildGrid();
-        // BuildSceneBVH();
+        BuildSceneBVH();
     }
 
     bool USceneManager::SpawnStaticMesh(const FSceneSpawnRequest& InRequest, bool bRebuildGrid)
@@ -90,11 +90,10 @@ namespace Scene
 
         // 4. 그리드 삽입
 		if (bRebuildGrid) 
-        { 
-            if (Grid) Grid->BuildGrid(); 
-            // BuildSceneBVH();       
-        }
-
+		{ 
+		    if (Grid) Grid->BuildGrid(); 
+		    BuildSceneBVH();       
+		}
         return true;
     }
 
@@ -120,7 +119,7 @@ namespace Scene
             }
         }
         if (Grid) Grid->BuildGrid(); 
-        // BuildSceneBVH();    
+        BuildSceneBVH();    
     }
 
     bool USceneManager::EnsureObjectCount(uint32_t InObjectCount)
@@ -195,7 +194,7 @@ namespace Scene
 
         SceneData->TotalObjectCount = Count;
         if (Grid) Grid->BuildGrid();
-        // BuildSceneBVH();
+        BuildSceneBVH();
         return File.good();
     }
 
@@ -233,6 +232,8 @@ namespace Scene
         SceneData->IsVisible[ObjectIndex] = true;
 
         SceneData->TotalObjectCount++;
+        if (Grid) Grid->BuildGrid();
+        BuildSceneBVH();
         return true;
     }
 
@@ -270,6 +271,8 @@ namespace Scene
         SceneData->IsVisible[ObjectIndex] = true;
 
         SceneData->TotalObjectCount++;
+        if (Grid) Grid->BuildGrid();
+        BuildSceneBVH();
         return true;
     }
 

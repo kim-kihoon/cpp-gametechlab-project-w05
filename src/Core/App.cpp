@@ -305,13 +305,24 @@ void UApp::UniformCullingAndRenderCollect()
         SceneData->ResetRenderQueue();
         SceneData->IsVisible.fill(false);
 
-        // SceneBVH 대신 UniformGrid를 사용합니다.
-        SceneManager->GetGrid()->QueryFrustum(
-            CameraFrustum,
-            SceneData->RenderQueue.data(),
-            SceneData->RenderCount,
-            Scene::FSceneDataSOA::MAX_OBJECTS
-        );
+        if (Core::GPerformanceMetrics.CurrentStructure == Core::ESpatialStructure::UniformGrid)
+        {
+            SceneManager->GetGrid()->QueryFrustum(
+                CameraFrustum,
+                SceneData->RenderQueue.data(),
+                SceneData->RenderCount,
+                Scene::FSceneDataSOA::MAX_OBJECTS
+            );
+        }
+        else
+        {
+            SceneManager->GetSceneBVH()->QueryFrustum(
+                CameraFrustum,
+                SceneData->RenderQueue.data(),
+                SceneData->RenderCount,
+                Scene::FSceneDataSOA::MAX_OBJECTS
+            );
+        }
 
         for (uint32_t QueueIndex = 0; QueueIndex < SceneData->RenderCount; ++QueueIndex)
         {
@@ -374,17 +385,30 @@ bool UApp::CheckHit(const DirectX::XMFLOAT3& cameraPosition, const Math::FRay& p
             return bHit;
         };
 
-    return SceneManager->GetGrid()->Raycast(pickRay, 1000.0f, OutHitIndex, HitDistance, PreciseTriangleTest);
+    if (Core::GPerformanceMetrics.CurrentStructure == Core::ESpatialStructure::UniformGrid)
+    {
+        return SceneManager->GetGrid()->Raycast(pickRay, 1000.0f, OutHitIndex, HitDistance, PreciseTriangleTest);
+    }
+    else
+    {
+        return SceneManager->GetSceneBVH()->Raycast(pickRay, 1000.0f, OutHitIndex, HitDistance, PreciseTriangleTest);
+    }
 }
 
 void UApp::Picking()
 {
     if (bPendingPick && SceneManager)
     {
-        Core::GPerformanceMetrics.BVHNodeTestCount = 0;
-        Core::GPerformanceMetrics.ObjectAABBTestCount = 0;
-        Core::GPerformanceMetrics.GridCellTestCount = 0;
-        Core::GPerformanceMetrics.GridObjectAABBTestCount = 0;
+        if (Core::GPerformanceMetrics.CurrentStructure == Core::ESpatialStructure::UniformGrid)
+        {
+            Core::GPerformanceMetrics.GridCellTestCount = 0;
+            Core::GPerformanceMetrics.GridObjectAABBTestCount = 0;
+        }
+        else
+        {
+            Core::GPerformanceMetrics.BVHNodeTestCount = 0;
+            Core::GPerformanceMetrics.ObjectAABBTestCount = 0;
+        }
 
         // 1) 마우스 화면 좌표 획득
         int screenX = PickPosition.x;
@@ -417,6 +441,19 @@ void UApp::Picking()
         uint64_t LastPickTime = pickCounter.Finish();
         Core::GPerformanceMetrics.LastPickingCycles = LastPickTime;
         Core::GPerformanceMetrics.TotalPickingCycles += LastPickTime;
+
+        if (Core::GPerformanceMetrics.CurrentStructure == Core::ESpatialStructure::UniformGrid)
+        {
+            Core::GPerformanceMetrics.GridLastPickingCycles = LastPickTime;
+            Core::GPerformanceMetrics.GridTotalPickingCycles += LastPickTime;
+            Core::GPerformanceMetrics.GridTotalPickCount++;
+        }
+        else
+        {
+            Core::GPerformanceMetrics.BVHLastPickingCycles = LastPickTime;
+            Core::GPerformanceMetrics.BVHTotalPickingCycles += LastPickTime;
+            Core::GPerformanceMetrics.BVHTotalPickCount++;
+        }
 
         bPendingPick = false;
     }
@@ -536,6 +573,41 @@ LRESULT CALLBACK UApp::WindowProc(HWND hWnd, UINT Message, WPARAM wParam, LPARAM
         {
             AppInstance->bIsRightMouseLooking = false;
             ::ReleaseCapture();
+        }
+        return 0;
+    case WM_KEYDOWN:
+        if (AppInstance != nullptr)
+        {
+            if (wParam == '1')
+            {
+                Core::GPerformanceMetrics.CurrentStructure = Core::ESpatialStructure::UniformGrid;
+            }
+            else if (wParam == '2')
+            {
+                Core::GPerformanceMetrics.CurrentStructure = Core::ESpatialStructure::SceneBVH;
+            }
+            else if (wParam == 'R')
+            {
+                Core::GPerformanceMetrics.LastPickingCycles = 0;
+                Core::GPerformanceMetrics.TotalPickingCycles = 0;
+                Core::GPerformanceMetrics.TotalPickCount = 0;
+
+                Core::GPerformanceMetrics.GridLastPickingCycles = 0;
+                Core::GPerformanceMetrics.GridTotalPickingCycles = 0;
+                Core::GPerformanceMetrics.GridTotalPickCount = 0;
+
+                Core::GPerformanceMetrics.BVHLastPickingCycles = 0;
+                Core::GPerformanceMetrics.BVHTotalPickingCycles = 0;
+                Core::GPerformanceMetrics.BVHTotalPickCount = 0;
+
+                Core::GPerformanceMetrics.FrameIndex = 0;
+
+                Core::GPerformanceMetrics.BVHNodeTestCount = 0;
+                Core::GPerformanceMetrics.ObjectAABBTestCount = 0;
+
+                Core::GPerformanceMetrics.GridCellTestCount = 0;
+                Core::GPerformanceMetrics.GridObjectAABBTestCount = 0;
+            }
         }
         return 0;
     case WM_MOUSEMOVE:
