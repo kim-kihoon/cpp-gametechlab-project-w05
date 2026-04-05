@@ -62,6 +62,18 @@ namespace Scene
         const float CY = DirectX::XMVectorGetY(Translation);
         const float CZ = DirectX::XMVectorGetZ(Translation);
 
+        DirectX::XMVECTOR Scale, Rot, Trans;
+        DirectX::XMMatrixDecompose(&Scale, &Rot, &Trans, InRequest.WorldMatrix);
+        float MaxScale = std::max({ DirectX::XMVectorGetX(Scale), DirectX::XMVectorGetY(Scale), DirectX::XMVectorGetZ(Scale) });
+
+        float LocalRadius = 0.5f;
+        float WorldRadius = LocalRadius * MaxScale;
+
+        SceneData->CenterX[ObjectIndex] = CX;
+        SceneData->CenterY[ObjectIndex] = CY;
+        SceneData->CenterZ[ObjectIndex] = CZ;
+        SceneData->Radius[ObjectIndex] = WorldRadius;
+
         SceneData->MinX[ObjectIndex] = CX - DEFAULT_HALF_EXTENT;
         SceneData->MinY[ObjectIndex] = CY - DEFAULT_HALF_EXTENT;
         SceneData->MinZ[ObjectIndex] = CZ - DEFAULT_HALF_EXTENT;
@@ -142,6 +154,10 @@ namespace Scene
         File.write(reinterpret_cast<const char*>(SceneData->MaxX.data()), sizeof(float) * Count);
         File.write(reinterpret_cast<const char*>(SceneData->MaxY.data()), sizeof(float) * Count);
         File.write(reinterpret_cast<const char*>(SceneData->MaxZ.data()), sizeof(float) * Count);
+        File.write(reinterpret_cast<const char*>(SceneData->CenterX.data()), sizeof(float) * Count);
+        File.write(reinterpret_cast<const char*>(SceneData->CenterY.data()), sizeof(float) * Count);
+        File.write(reinterpret_cast<const char*>(SceneData->CenterZ.data()), sizeof(float) * Count);
+        File.write(reinterpret_cast<const char*>(SceneData->Radius.data()), sizeof(float) * Count);
         File.write(reinterpret_cast<const char*>(SceneData->WorldMatrices.data()), sizeof(FPacked3x4Matrix) * Count);
         File.write(reinterpret_cast<const char*>(SceneData->MeshIDs.data()), sizeof(uint32_t) * Count);
         File.write(reinterpret_cast<const char*>(SceneData->MaterialIDs.data()), sizeof(uint32_t) * Count);
@@ -169,6 +185,10 @@ namespace Scene
         File.read(reinterpret_cast<char*>(SceneData->MaxX.data()), sizeof(float) * Count);
         File.read(reinterpret_cast<char*>(SceneData->MaxY.data()), sizeof(float) * Count);
         File.read(reinterpret_cast<char*>(SceneData->MaxZ.data()), sizeof(float) * Count);
+        File.read(reinterpret_cast<char*>(SceneData->CenterX.data()), sizeof(float) * Count);
+        File.read(reinterpret_cast<char*>(SceneData->CenterY.data()), sizeof(float) * Count);
+        File.read(reinterpret_cast<char*>(SceneData->CenterZ.data()), sizeof(float) * Count);
+        File.read(reinterpret_cast<char*>(SceneData->Radius.data()), sizeof(float) * Count);
         File.read(reinterpret_cast<char*>(SceneData->WorldMatrices.data()), sizeof(FPacked3x4Matrix) * Count);
         File.read(reinterpret_cast<char*>(SceneData->MeshIDs.data()), sizeof(uint32_t) * Count);
         File.read(reinterpret_cast<char*>(SceneData->MaterialIDs.data()), sizeof(uint32_t) * Count);
@@ -191,6 +211,22 @@ namespace Scene
         SceneData->MaxY[ObjectIndex] = InBounds.Max.y;
         SceneData->MaxZ[ObjectIndex] = InBounds.Max.z;
 
+        const float CX = (InBounds.Max.x + InBounds.Min.x) * 0.5f;
+        const float CY = (InBounds.Max.y + InBounds.Min.y) * 0.5f;
+        const float CZ = (InBounds.Max.z + InBounds.Min.z) * 0.5f;
+
+        const float ExtentX = (InBounds.Max.x - InBounds.Min.x) * 0.5f;
+        const float ExtentY = (InBounds.Max.y - InBounds.Min.y) * 0.5f;
+        const float ExtentZ = (InBounds.Max.z - InBounds.Min.z) * 0.5f;
+
+        // 피타고라스의 정리로 박스를 감싸는 구의 반지름 계산
+        const float Radius = std::sqrt((ExtentX * ExtentX) + (ExtentY * ExtentY) + (ExtentZ * ExtentZ));
+
+        SceneData->CenterX[ObjectIndex] = CX;
+        SceneData->CenterY[ObjectIndex] = CY;
+        SceneData->CenterZ[ObjectIndex] = CZ;
+        SceneData->Radius[ObjectIndex] = Radius;
+
         SceneData->WorldMatrices[ObjectIndex].Store(InWorldMatrix);
         SceneData->MeshIDs[ObjectIndex] = InMeshID;
         SceneData->MaterialIDs[ObjectIndex] = InMaterialID;
@@ -211,6 +247,22 @@ namespace Scene
         SceneData->MaxX[ObjectIndex] = InBounds.Max.x;
         SceneData->MaxY[ObjectIndex] = InBounds.Max.y;
         SceneData->MaxZ[ObjectIndex] = InBounds.Max.z;
+
+        const float CX = (InBounds.Max.x + InBounds.Min.x) * 0.5f;
+        const float CY = (InBounds.Max.y + InBounds.Min.y) * 0.5f;
+        const float CZ = (InBounds.Max.z + InBounds.Min.z) * 0.5f;
+
+        const float ExtentX = (InBounds.Max.x - InBounds.Min.x) * 0.5f;
+        const float ExtentY = (InBounds.Max.y - InBounds.Min.y) * 0.5f;
+        const float ExtentZ = (InBounds.Max.z - InBounds.Min.z) * 0.5f;
+
+        // 피타고라스의 정리로 박스를 감싸는 구의 반지름 계산
+        const float Radius = std::sqrt((ExtentX * ExtentX) + (ExtentY * ExtentY) + (ExtentZ * ExtentZ));
+
+        SceneData->CenterX[ObjectIndex] = CX;
+        SceneData->CenterY[ObjectIndex] = CY;
+        SceneData->CenterZ[ObjectIndex] = CZ;
+        SceneData->Radius[ObjectIndex] = Radius;
 
         SceneData->WorldMatrices[ObjectIndex] = InWorldMatrix;
         SceneData->MeshIDs[ObjectIndex] = InMeshID;

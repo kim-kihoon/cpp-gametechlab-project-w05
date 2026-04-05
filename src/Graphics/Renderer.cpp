@@ -347,6 +347,19 @@ namespace Graphics
                 return false;
             }
 
+            OutMeshResource.LocalAABB.Min = { FLT_MAX, FLT_MAX, FLT_MAX };
+            OutMeshResource.LocalAABB.Max = { -FLT_MAX, -FLT_MAX, -FLT_MAX };
+
+            for (const auto& V : OutMeshResource.SourceVertices)
+            {
+                OutMeshResource.LocalAABB.Expand(V.Position);
+            }
+
+            float SizeX = OutMeshResource.LocalAABB.Max.x - OutMeshResource.LocalAABB.Min.x;
+            float SizeY = OutMeshResource.LocalAABB.Max.y - OutMeshResource.LocalAABB.Min.y;
+            float SizeZ = OutMeshResource.LocalAABB.Max.z - OutMeshResource.LocalAABB.Min.z;
+            OutMeshResource.LocalRadius = (std::max)({ SizeX, SizeY, SizeZ }) * 0.5f;
+
             D3D11_BUFFER_DESC VertexBufferDesc = {};
             VertexBufferDesc.ByteWidth = static_cast<UINT>(OutMeshResource.SourceVertices.size() * sizeof(URenderer::FMeshVertex));
             VertexBufferDesc.Usage = D3D11_USAGE_DEFAULT;
@@ -868,8 +881,9 @@ namespace Graphics
             }
         }
 
-        DrawDebugBVH(InSceneManager);
-        //DrawDebugGrid(InSceneManager);
+
+        // DrawDebugBVH(InSceneManager);
+        // DrawDebugGrid(InSceneManager);
         if (DebugRenderer)
         {
             DebugRenderer->Render(Context.Get(), view * proj);

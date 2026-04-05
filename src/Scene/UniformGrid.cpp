@@ -258,7 +258,15 @@ namespace Scene
                             const uint32_t Index = Indices[i];
                             if (VisitTokens[Index] == CurrentVisitToken) continue;
 
-                            if (Frustum.TestBox(
+                            if (Frustum.TestSphere(
+                                SceneData->CenterX[Index],
+                                SceneData->CenterY[Index],
+                                SceneData->CenterZ[Index],
+                                SceneData->Radius[Index]) == Math::ECullingResult::Outside)
+                            {
+                                continue;
+                            }
+                            /*if (Frustum.TestBox(
                                 SceneData->MinX[Index],
                                 SceneData->MinY[Index],
                                 SceneData->MinZ[Index],
@@ -267,7 +275,7 @@ namespace Scene
                                 SceneData->MaxZ[Index]) == Math::ECullingResult::Outside)
                             {
                                 continue;
-                            }
+                            }*/
 
                             VisitTokens[Index] = CurrentVisitToken;
                             if (OutCount < MaxCapacity)

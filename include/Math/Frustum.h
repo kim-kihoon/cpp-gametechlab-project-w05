@@ -104,5 +104,15 @@ namespace Math
         {
             return TestBox(Box.Min.x, Box.Min.y, Box.Min.z, Box.Max.x, Box.Max.y, Box.Max.z);
         }
+
+        inline Math::ECullingResult TestSphere(float CenterX, float CenterY, float CenterZ, float Radius) const
+        {
+            const DirectX::BoundingSphere Sphere(DirectX::XMFLOAT3(CenterX, CenterY, CenterZ), Radius);
+            const DirectX::ContainmentType Result = NativeFrustum.Contains(Sphere);
+
+            if (Result == DirectX::DISJOINT) return ECullingResult::Outside;
+            if (Result == DirectX::CONTAINS) return ECullingResult::FullyInside;
+            return ECullingResult::Intersecting;
+        }
     };
 }

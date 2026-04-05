@@ -1,6 +1,7 @@
 ﻿#pragma once
 #include <vector>
 #include <array>
+#include <cmath>
 #include <Math/Frustum.h>
 #include <Scene/SceneData.h>
 #include <Core/AppTypes.h>
@@ -101,7 +102,36 @@ namespace Scene
                     VisitTokens[Idx] = CurrentVisitToken;
 
                     Core::GPerformanceMetrics.GridObjectAABBTestCount++;
-                    // --- 1. AABB 광역 검사 (Broad Phase) ---
+                    // Sphere 충돌 판정
+                    const float dx = SceneData->CenterX[Idx] - Ray.Origin.x;
+                    const float dy = SceneData->CenterY[Idx] - Ray.Origin.y;
+                    const float dz = SceneData->CenterZ[Idx] - Ray.Origin.z;
+
+                    const float tca = (dx * Ray.Direction.x) + (dy * Ray.Direction.y) + (dz * Ray.Direction.z);
+
+                    const float d2 = (dx * dx + dy * dy + dz * dz) - (tca * tca);
+                    const float r2 = SceneData->Radius[Idx] * SceneData->Radius[Idx];
+
+                    if (d2 > r2) continue;
+
+                    const float thc = std::sqrt(r2 - d2);
+                    const float t0 = tca - thc;
+                    const float t1 = tca + thc;
+
+                    if (t1 < 0.0f) continue;
+
+                    const float tNear = (t0 < 0.0f) ? t1 : t0;
+                    if (tNear < ClosestHitInCell)
+                    {
+                        float PreciseDistance = ClosestHitInCell;
+                        if (NarrowPhaseTest(Idx, PreciseDistance) && PreciseDistance < ClosestHitInCell)
+                        {
+                            ClosestHitInCell = PreciseDistance;
+                            BestIndexInCell = Idx;
+                            bHitInCell = true;
+                        }
+                    }
+                    /*// --- 1. AABB 광역 검사 (Broad Phase) ---
                     float t1 = (SceneData->MinX[Idx] - Ray.Origin.x) * Ray.InvDirection.x;
                     float t2 = (SceneData->MaxX[Idx] - Ray.Origin.x) * Ray.InvDirection.x;
                     const float tMinX = (std::min)(t1, t2); const float tMaxX_Box = (std::max)(t1, t2);
@@ -127,7 +157,7 @@ namespace Scene
                             BestIndexInCell = Idx;
                             bHitInCell = true;
                         }
-                    }
+                    }*/
                 }
 
                 if (bHitInCell)

@@ -57,6 +57,9 @@ namespace Graphics
             uint32_t ObjectCount = 0;
             FBVH MeshBVH;
 
+            Math::FBox LocalAABB;
+            float LocalRadius = 0.0f;
+
             void BuildBVH();
             bool Raycast(const Math::FRay& LocalRay, float& OutT) const;
         };

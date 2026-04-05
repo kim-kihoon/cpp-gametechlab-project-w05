@@ -43,6 +43,9 @@ namespace Scene
         FMatrix WorldMatrix = DirectX::XMMatrixIdentity();
         uint32_t MeshID = 0;
         uint32_t MaterialID = 0;
+
+        float LocalRadius = 0.5f;
+        Math::FBox LocalAABB = {};
     };
 
     /**
@@ -56,6 +59,9 @@ namespace Scene
         float Spacing = 100.0f;
         uint32_t MeshID = 0;
         uint32_t MaterialID = 0;
+
+        float LocalRadius = 0.5f;
+        Math::FBox LocalAABB = {};
     };
 
     /**
