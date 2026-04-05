@@ -869,7 +869,7 @@ namespace Graphics
         }
 
         DrawDebugBVH(InSceneManager);
-        DrawDebugGrid(InSceneManager);
+        //DrawDebugGrid(InSceneManager);
         if (DebugRenderer)
         {
             DebugRenderer->Render(Context.Get(), view * proj);

@@ -162,12 +162,12 @@ namespace Graphics
             InMetrics.TotalPickCount);
 
         std::snprintf(Buffer2, sizeof(Buffer2),
-            "BVH Tests -> Nodes: %u, Object AABBs: %u",
+            "BVH Tests -> Nodes: %u, Object Bounding Box: %u",
             InMetrics.BVHNodeTestCount,
             InMetrics.ObjectAABBTestCount);
 
         std::snprintf(Buffer3, sizeof(Buffer3),
-            "Grid Tests -> Cells: %u, Object AABBs: %u",
+            "Grid Tests -> Cells: %u, Object Bounding Box: %u",
             InMetrics.GridCellTestCount,
             InMetrics.GridObjectAABBTestCount);
 
