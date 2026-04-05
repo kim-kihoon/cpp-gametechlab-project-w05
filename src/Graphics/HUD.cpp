@@ -150,6 +150,8 @@ namespace Graphics
 
         float FrameMS = (InMetrics.FramesPerSecond > 0.0f) ? (1000.0f / InMetrics.FramesPerSecond) : 0.0f;
 
+        double LastPickingMS = Core::FPlatformTime::ToMilliseconds(InMetrics.LastPickingCycles);
+        double TotalPickingMS = Core::FPlatformTime::ToMilliseconds(InMetrics.TotalPickingCycles);
         // Grid Picking Stats
         double GLastMS = Core::FPlatformTime::ToMilliseconds(InMetrics.GridLastPickingCycles);
         double GTotalMS = Core::FPlatformTime::ToMilliseconds(InMetrics.GridTotalPickingCycles);
@@ -163,10 +165,11 @@ namespace Graphics
         const char* StructureName = (InMetrics.CurrentStructure == Core::ESpatialStructure::UniformGrid) ? "Grid" : "BVH";
 
         std::snprintf(Buffer, sizeof(Buffer),
-            "[%s Mode] FPS: %.1f (%.1fms)",
-            StructureName,
+            "FPS: %.1f(%.1fms) Picking Time %.4fms, RenderObjects: %u",
             InMetrics.FramesPerSecond,
-            FrameMS);
+            FrameMS,
+            LastPickingMS,
+            InMetrics.RenderedObjectCount);
 
         std::snprintf(Buffer4, sizeof(Buffer4),
             "Grid Pick -> Last:%.4fms Avg:%.4fms Total:%.2fms (Cnt:%llu)",

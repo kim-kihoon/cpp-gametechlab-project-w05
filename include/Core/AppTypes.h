@@ -43,6 +43,7 @@ namespace Core
         uint32_t GridObjectAABBTestCount = 0;
 
         ESpatialStructure CurrentStructure = ESpatialStructure::UniformGrid;
+        uint64_t RenderedObjectCount = 0;
     };
 
     // 전역 성능 지표

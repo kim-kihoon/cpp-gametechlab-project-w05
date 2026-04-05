@@ -282,15 +282,15 @@ int UApp::Run()
 
 void UApp::Update(float InDeltaTime)
 {
-	UpdateCamera(InDeltaTime);
+    UpdateCamera(InDeltaTime);
 
     UniformCullingAndRenderCollect();
 
-	UpdateFramePerformanceMetrics(InDeltaTime);
+    UpdateFramePerformanceMetrics(InDeltaTime);
 
     Picking();
-	SceneManager->Update(InDeltaTime);
-	EditorLayer->Update(InDeltaTime);
+    SceneManager->Update(InDeltaTime);
+    EditorLayer->Update(InDeltaTime);
 }
 
 void UApp::UniformCullingAndRenderCollect()
@@ -303,7 +303,7 @@ void UApp::UniformCullingAndRenderCollect()
         Math::FFrustum CameraFrustum;
         CameraFrustum.Update(View, Proj);
 
-        Scene::FSceneDataSOA* SceneData = SceneManager->GetSceneData();
+        /*Scene::FSceneDataSOA* SceneData = SceneManager->GetSceneData();
         SceneData->ResetRenderQueue();
         SceneData->IsVisible.fill(false);
 
@@ -329,7 +329,9 @@ void UApp::UniformCullingAndRenderCollect()
         for (uint32_t QueueIndex = 0; QueueIndex < SceneData->RenderCount; ++QueueIndex)
         {
             SceneData->IsVisible[SceneData->RenderQueue[QueueIndex]] = true;
-        }
+        }*/
+        // 최적화된 AVX2 컬링 및 LOD(MeshID) 빌드 함수 호출
+        SceneManager->GetGrid()->CullingAndBuildRenderQueue(CameraFrustum, DirectX::XMLoadFloat3(&CameraState.Position));
     }
 }
 
@@ -427,7 +429,9 @@ void UApp::Picking()
 
         // 5) 모든 오브젝트(프리미티브)에 대해 충돌 판정
         uint32_t HitIndex = 0;
+
         bool isHit = CheckHit(CameraState.Position, pickRay, HitIndex);
+        float HitDistance = 1000.0f;
 
         // 필요 시 'isHit' 결과를 활용해 추가 로직 처리
         if (isHit)
@@ -515,16 +519,16 @@ void UApp::UpdateFramePerformanceMetrics(float InDeltaTime)
     const float AverageFPS = (TitleUpdateAccumulator > 0.0f) ? (static_cast<float>(TitleUpdateFrames) / TitleUpdateAccumulator) : 0.0f;
     const float AverageFrameMilliseconds = (TitleUpdateFrames > 0) ? ((TitleUpdateAccumulator * 1000.0f) / static_cast<float>(TitleUpdateFrames)) : 0.0f;
 
-	const uint32_t TotalObjects = SceneManager->GetObjectCount();
-	const uint32_t VisibleObjects = SceneManager->GetVisibleObjectCount();
+    const uint32_t TotalObjects = SceneManager->GetObjectCount();
+    const uint32_t VisibleObjects = SceneManager->GetVisibleObjectCount();
 
     std::wostringstream TitleStream;
     TitleStream.precision(2);
     TitleStream << std::fixed
-                << L"Verstappen Engine | Scene Preview | FPS(avg): " << AverageFPS
-                << L" | Frame(ms): " << AverageFrameMilliseconds
-                << L" | FrustumVisible: " << VisibleObjects
-                << L"/" << TotalObjects;
+        << L"Verstappen Engine | Scene Preview | FPS(avg): " << AverageFPS
+        << L" | Frame(ms): " << AverageFrameMilliseconds
+        << L" | FrustumVisible: " << VisibleObjects
+        << L"/" << TotalObjects;
     ::SetWindowTextW(WindowHandle, TitleStream.str().c_str());
 
     TitleUpdateAccumulator = 0.0f;

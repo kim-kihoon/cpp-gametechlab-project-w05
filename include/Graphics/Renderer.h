@@ -11,6 +11,8 @@
 #include <vector>
 #include <wrl/client.h>
 #include "Math/MathTypes.h"
+#include "Scene/SceneData.h"
+
 class UDebugRenderer;
 namespace Scene { class USceneManager; }
 
@@ -45,6 +47,19 @@ namespace Graphics
             std::vector<uint32_t> TriangleIndices; // Indices of triangles (first vertex in SourceIndices)
         };
 
+        struct FBillboardVertex
+        {
+            DirectX::XMFLOAT3 Position;
+            DirectX::XMFLOAT2 TexCoord;
+        };
+
+        struct FImpostorResource
+        {
+            ComPtr<ID3D11Texture2D> SnapshotTexture;
+            ComPtr<ID3D11ShaderResourceView> SnapshotSRV;
+            bool bIsBaked = false;
+        };
+
         struct FMeshResource
         {
             std::vector<FMeshVertex> SourceVertices;
@@ -62,6 +77,7 @@ namespace Graphics
 
             void BuildBVH();
             bool Raycast(const Math::FRay& LocalRay, float& OutT) const;
+            DirectX::XMFLOAT3 LocalCenter = { 0, 0, 0 };
         };
 
         URenderer();
@@ -94,8 +110,16 @@ namespace Graphics
         void DrawDebugBVH(const Scene::USceneManager& InSceneManager); // 추가: BVH AABB 디버그 드로우 함수
         void DrawDebugGrid(const Scene::USceneManager& InSceneManager); // 추가: Uniform Grid 디버그 드로우 함수
 
+        void InitHiZResources(uint32_t Width, uint32_t Height);  // 추가
+        void BuildHiZMips();                                      // 추가
+        void RunOcclusionCull(Scene::FSceneDataSOA* SceneData,
+            const DirectX::XMMATRIX& ViewProj,
+            std::array<bool, Scene::FSceneDataSOA::MAX_OBJECTS>& OutIsVisible);
+
     private:
         static constexpr uint32_t MAX_MESH_TYPES = 2;
+        static constexpr uint32_t BILLBOARD_MESH_ID_OFFSET = 10;
+        static constexpr uint32_t RENDER_BUCKET_COUNT = MAX_MESH_TYPES * 2;
 
         ComPtr<ID3D11Device> Device;
         ComPtr<ID3D11DeviceContext> Context;
@@ -113,10 +137,17 @@ namespace Graphics
         ComPtr<ID3D11SamplerState> DiffuseSamplerState;
         ComPtr<ID3D11ShaderResourceView> DefaultWhiteTextureView;
 
+        ComPtr<ID3D11VertexShader> BillboardVS;
+        ComPtr<ID3D11PixelShader> BillboardPS;
+        ComPtr<ID3D11InputLayout> BillboardLayout;
+        ComPtr<ID3D11Buffer> BillboardVB;
+        ComPtr<ID3D11Buffer> BillboardIB;
+
         ComPtr<ID3D11RasterizerState> DefaultRasterizerState;
         ComPtr<ID3D11DepthStencilState> DefaultDepthStencilState;
 
         std::array<FMeshResource, MAX_MESH_TYPES> MeshResources = {};
+        std::array<FImpostorResource, MAX_MESH_TYPES> ImpostorResources = {};
         uint32_t ViewportWidth = 0;
         uint32_t ViewportHeight = 0;
         uint32_t PerObjectRingBufferOffset = 0;
@@ -125,6 +156,44 @@ namespace Graphics
         FDebugRenderSettings DebugSettings;
         Core::FFramePerformanceMetrics CurrentMetrics; // 추가: HUD에 전달할 데이터
         std::unique_ptr<FHUD> HUD; // 추가: HUD 객체
+
         std::unique_ptr<UDebugRenderer> DebugRenderer; // 추가: 디버그 렌더러
+
+        ComPtr<ID3D11ShaderResourceView> DepthCopySRV;
+        // Hi-Z Occlusion Culling
+        ComPtr<ID3D11Texture2D>                          HiZTexture;
+        ComPtr<ID3D11ShaderResourceView>                 HiZSRV;
+        std::vector<ComPtr<ID3D11UnorderedAccessView>>   HiZMipUAVs;
+        std::vector<ComPtr<ID3D11ShaderResourceView>>    HiZMipSRVs;
+
+        ComPtr<ID3D11ComputeShader>                      CSBuildHiZ;
+        ComPtr<ID3D11ComputeShader>                      CSTestOcclusion;
+
+        ComPtr<ID3D11Buffer>                             BoundsBuffer;
+        ComPtr<ID3D11ShaderResourceView>                 BoundsSRV;
+
+        ComPtr<ID3D11Buffer>                             VisibilityBuffer;
+        ComPtr<ID3D11UnorderedAccessView>                VisibilityUAV;
+        ComPtr<ID3D11Buffer> VisibilityStagingBuffers[2];
+        uint32_t             StagingReadIndex = 0;
+        uint32_t             StagingWriteIndex = 1;
+        bool                 bFirstFrame = true;
+
+        ComPtr<ID3D11Buffer>                             CullParamBuffer;
+        ComPtr<ID3D11Buffer>                             HiZBuildParamBuffer;
+        ComPtr<ID3D11SamplerState>                       PointClampSamplerState;
+
+        uint32_t HiZWidth = 0;
+        uint32_t HiZHeight = 0;
+        uint32_t HiZMipCount = 0;
+
+        // 이전 프레임 visibility 저장용
+        std::array<bool, Scene::FSceneDataSOA::MAX_OBJECTS> PrevIsVisible = {};
+        bool bHasPrevFrame = false;
+        ComPtr<ID3D11Buffer> BakePerFrameBuffer;
+        ComPtr<ID3D11Buffer> BakePerObjectBuffer;
+        ComPtr<ID3D11Buffer> BakeMatBuffer;
+
+        void BakeImpostor(uint32_t MeshID);
     };
 }

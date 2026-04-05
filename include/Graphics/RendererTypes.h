@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 #include <DirectXMath.h>
 
 namespace Graphics
@@ -22,5 +22,13 @@ namespace Graphics
         float MoveSpeed = 20.0f;
         float WheelSpeed = 6.0f;
         float LookSensitivity = 0.005f;
+    };
+
+    struct alignas(16) FObjectBoundsGPU
+    {
+        DirectX::XMFLOAT3 BoundsMin;
+        uint32_t          ObjectIndex;
+        DirectX::XMFLOAT3 BoundsMax;
+        uint32_t          _pad;
     };
 }

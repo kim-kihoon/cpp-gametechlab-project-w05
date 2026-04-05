@@ -55,6 +55,8 @@ namespace Scene
 
         template <typename NarrowPhaseFunc>
         bool Raycast(const Math::FRay& Ray, float MaxDistance, uint32_t& OutHitIndex, float& OutHitDistance, NarrowPhaseFunc NarrowPhaseTest);
+        /** [최적화] 프러스텀 컬링, LOD(MeshID) 갱신, 렌더 큐 빌드를 한 번에 수행 */
+        void CullingAndBuildRenderQueue(const Math::FFrustum& Frustum, const Math::FVector& CameraPos);
     };
 
     template <typename NarrowPhaseFunc>
@@ -75,7 +77,7 @@ namespace Scene
         const float tDeltaY = std::abs(CellSize * Ray.InvDirection.y);
         const float tDeltaZ = std::abs(CellSize * Ray.InvDirection.z);
 
-        float tMaxX = ((OriginX + (GridX + (StepX > 0 ? 1 : 0)) * CellSize) - Ray.Origin.x) * Ray.InvDirection.x;
+        float tMaxX = ((OriginX + (GridX + (StepX > 0 ? 1 : 0)) * CellSize) - Ray.Origin.x) * Ray.InvDirection.x;  
         float tMaxY = ((OriginY + (GridY + (StepY > 0 ? 1 : 0)) * CellSize) - Ray.Origin.y) * Ray.InvDirection.y;
         float tMaxZ = ((OriginZ + (GridZ + (StepZ > 0 ? 1 : 0)) * CellSize) - Ray.Origin.z) * Ray.InvDirection.z;
 

@@ -34,6 +34,7 @@ namespace Scene
         
         // Metadata
         alignas(64) std::array<uint32_t, MAX_OBJECTS> MeshIDs;
+        alignas(64) std::array<uint32_t, MAX_OBJECTS> BaseMeshIDs;
         alignas(64) std::array<uint32_t, MAX_OBJECTS> MaterialIDs;
         alignas(64) std::array<bool, MAX_OBJECTS> IsVisible;
 
