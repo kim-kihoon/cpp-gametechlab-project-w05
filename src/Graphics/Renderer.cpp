@@ -493,21 +493,41 @@ namespace Graphics
             Device->CreateRenderTargetView(BackBuffer.Get(), nullptr, &MainRenderTargetView);
         }
 
-        D3D11_TEXTURE2D_DESC DepthDesc = {};
-        DepthDesc.Width = ViewportWidth;
-        DepthDesc.Height = ViewportHeight;
-        DepthDesc.MipLevels = 1;
-        DepthDesc.ArraySize = 1;
-        DepthDesc.Format = DXGI_FORMAT_D24_UNORM_S8_UINT;
-        DepthDesc.SampleDesc.Count = 1;
-        DepthDesc.Usage = D3D11_USAGE_DEFAULT;
-        DepthDesc.BindFlags = D3D11_BIND_DEPTH_STENCIL;
-
         ComPtr<ID3D11Texture2D> DepthBuffer;
-        if (SUCCEEDED(Device->CreateTexture2D(&DepthDesc, nullptr, &DepthBuffer)))
         {
-            Device->CreateDepthStencilView(DepthBuffer.Get(), nullptr, &DepthStencilView);
+            D3D11_TEXTURE2D_DESC DepthDesc = {};
+            DepthDesc.Width = ViewportWidth;
+            DepthDesc.Height = ViewportHeight;
+            DepthDesc.MipLevels = 1;
+            DepthDesc.ArraySize = 1;
+            DepthDesc.Format = DXGI_FORMAT_R32_TYPELESS;
+            DepthDesc.SampleDesc.Count = 1;
+            DepthDesc.Usage = D3D11_USAGE_DEFAULT;
+            DepthDesc.BindFlags = D3D11_BIND_DEPTH_STENCIL | D3D11_BIND_SHADER_RESOURCE;
+            if (FAILED(Device->CreateTexture2D(&DepthDesc, nullptr, &DepthBuffer))) return;
         }
+        {
+            D3D11_DEPTH_STENCIL_VIEW_DESC DSVDesc = {};
+            DSVDesc.Format = DXGI_FORMAT_D32_FLOAT;
+            DSVDesc.ViewDimension = D3D11_DSV_DIMENSION_TEXTURE2D;
+            DSVDesc.Texture2D.MipSlice = 0;
+            Device->CreateDepthStencilView(DepthBuffer.Get(), &DSVDesc, &DepthStencilView);
+        }
+        {
+            D3D11_SHADER_RESOURCE_VIEW_DESC SRVDesc = {};
+            SRVDesc.Format = DXGI_FORMAT_R32_FLOAT;
+            SRVDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+            SRVDesc.Texture2D.MostDetailedMip = 0;
+            SRVDesc.Texture2D.MipLevels = 1;
+            Device->CreateShaderResourceView(DepthBuffer.Get(), &SRVDesc, &DepthCopySRV);
+        }
+
+        // Hi-Z 리소스도 재생성
+        HiZTexture.Reset();
+        HiZSRV.Reset();
+        HiZMipUAVs.clear();
+        HiZMipSRVs.clear();
+        InitHiZResources(ViewportWidth, ViewportHeight);
     }
 
     const URenderer::FMeshResource* URenderer::GetMeshResource(uint32_t MeshID) const
@@ -617,34 +637,34 @@ namespace Graphics
 
         // ── Hi-Z Build CS ─────────────────────────────────────────────────────────
         const char* HiZBuildSrc = R"(
-    Texture2D<float>   SrcDepth : register(t0);
-    RWTexture2D<float> DstMip   : register(u0);
+            Texture2D<float>   SrcDepth : register(t0);
+            RWTexture2D<float> DstMip   : register(u0);
 
-    cbuffer MipParams : register(b0)
-    {
-        uint SrcW;
-        uint SrcH;
-        uint2 _pad;
-    };
+            cbuffer MipParams : register(b0)
+            {
+                uint SrcW;
+                uint SrcH;
+                uint2 _pad;
+            };
 
-    [numthreads(8, 8, 1)]
-    void CSBuildHiZ(uint3 DTid : SV_DispatchThreadID)
-    {
-        uint2 dst = DTid.xy;
-        uint2 src = dst * 2;
+            [numthreads(8, 8, 1)]
+            void CSBuildHiZ(uint3 DTid : SV_DispatchThreadID)
+            {
+                uint2 dst = DTid.xy;
+                uint2 src = dst * 2;
 
-        float d0 = SrcDepth.Load(int3(src + uint2(0, 0), 0));
-        float d1 = SrcDepth.Load(int3(src + uint2(1, 0), 0));
-        float d2 = SrcDepth.Load(int3(src + uint2(0, 1), 0));
-        float d3 = SrcDepth.Load(int3(src + uint2(1, 1), 0));
+                float d0 = SrcDepth.Load(int3(src + uint2(0, 0), 0));
+                float d1 = SrcDepth.Load(int3(src + uint2(1, 0), 0));
+                float d2 = SrcDepth.Load(int3(src + uint2(0, 1), 0));
+                float d3 = SrcDepth.Load(int3(src + uint2(1, 1), 0));
 
-        // 경계 밖 텍셀은 0으로 처리 (src 크기 초과 방지)
-        if (src.x + 1 >= SrcW) { d1 = d0; d3 = d2; }
-        if (src.y + 1 >= SrcH) { d2 = d0; d3 = d1; }
+                // 경계 밖 텍셀은 0으로 처리 (src 크기 초과 방지)
+                if (src.x + 1 >= SrcW) { d1 = d0; d3 = d2; }
+                if (src.y + 1 >= SrcH) { d2 = d0; d3 = d1; }
 
-        DstMip[dst] = max(max(d0, d1), max(d2, d3));
-    }
-)";
+                DstMip[dst] = max(max(d0, d1), max(d2, d3));
+            }
+        )";
 
         ComPtr<ID3DBlob> HiZBuildBlob, HiZBuildErr;
         if (FAILED(D3DCompile(HiZBuildSrc, strlen(HiZBuildSrc), "HiZBuild", nullptr, nullptr,
@@ -731,8 +751,12 @@ namespace Graphics
 
                 // 화면 점유 크기로 mip 선택
                 float2 sizeUV = uvMax - uvMin;
-                float  texels = max(sizeUV.x / HiZTexelWidth, sizeUV.y / HiZTexelHeight);
-                uint   mip    = (uint)clamp(log2(texels), 0.0f, (float)HiZMipLevels);
+
+                // 수정: AABB가 커버하는 픽셀 수의 log2 → 해당 크기를 완전히 커버하는 mip
+                float  sizeX  = sizeUV.x * (float)HiZTexelWidth;   // 픽셀 단위 width
+                float  sizeY  = sizeUV.y * (float)HiZTexelHeight;  // 픽셀 단위 height
+                float  texels = max(sizeX, sizeY);
+                uint   mip    = (uint)clamp(floor(log2(texels)), 0.0f, (float)HiZMipLevels);
 
                 // 4코너 샘플 → 보수적 최대값
                 float d0 = HiZTexture.SampleLevel(PointClampSamp, float2(uvMin.x, uvMin.y), mip);
@@ -741,8 +765,8 @@ namespace Graphics
                 float d3 = HiZTexture.SampleLevel(PointClampSamp, float2(uvMax.x, uvMax.y), mip);
                 float occluderDepth = max(max(d0, d1), max(d2, d3));
 
-                // minZ <= occluderDepth → AABB 앞면이 occluder 앞에 있음 → visible
-                VisibilityFlags[b.ObjectIndex] = (minZ <= occluderDepth) ? 1u : 0u;
+                // 비교: AABB 가장 가까운 점이 occluder보다 뒤에 있으면 culled
+                VisibilityFlags[b.ObjectIndex] = (minZ > occluderDepth) ? 0u : 1u;
             }
         )";
 
@@ -885,25 +909,20 @@ namespace Graphics
 
     void URenderer::BuildHiZMips()
     {
-        // mip0에 현재 프레임 Depth를 복사 (DepthCopySRV → HiZTexture mip0)
-        // DepthCopySRV는 R32_FLOAT로 해석된 Depth Buffer SRV
+        // DSV 해제 (같은 텍스처를 SRV로 읽기 위해)
+        ID3D11RenderTargetView* nullRTV = nullptr;
+        Context->OMSetRenderTargets(0, &nullRTV, nullptr);
+
+        // Depth → HiZTexture mip0 복사
         {
             ID3D11Resource* depthRes = nullptr;
             DepthCopySRV->GetResource(&depthRes);
-
-            // HiZTexture mip0만 대상으로 CopySubresourceRegion
             Context->CopySubresourceRegion(
-                HiZTexture.Get(),
-                0,          // dst subresource (mip0)
-                0, 0, 0,    // dst x, y, z
-                depthRes,
-                0,          // src subresource (mip0)
-                nullptr);   // 전체 복사
-
+                HiZTexture.Get(), 0, 0, 0, 0,
+                depthRes, 0, nullptr);
             depthRes->Release();
         }
 
-        // mip1 ~ mipN 빌드
         Context->CSSetShader(CSBuildHiZ.Get(), nullptr, 0);
 
         for (uint32_t m = 1; m < HiZMipCount; ++m)
@@ -925,20 +944,23 @@ namespace Graphics
                 }
             }
 
+            // m==1일 때는 DepthCopySRV에서 직접 읽기 (HiZTexture mip0 SRV 충돌 방지)
+            ID3D11ShaderResourceView* srcSRV = (m == 1)
+                ? DepthCopySRV.Get()
+                : HiZMipSRVs[m - 1].Get();
+
             Context->CSSetConstantBuffers(0, 1, HiZBuildParamBuffer.GetAddressOf());
-            Context->CSSetShaderResources(0, 1, HiZMipSRVs[m - 1].GetAddressOf());
+            Context->CSSetShaderResources(0, 1, &srcSRV);
             Context->CSSetUnorderedAccessViews(0, 1, HiZMipUAVs[m].GetAddressOf(), nullptr);
 
             Context->Dispatch((DstW + 7) / 8, (DstH + 7) / 8, 1);
 
-            // 다음 iteration 전 해제 (D3D11 validation)
             ID3D11ShaderResourceView* nullSRV = nullptr;
             ID3D11UnorderedAccessView* nullUAV = nullptr;
             Context->CSSetShaderResources(0, 1, &nullSRV);
             Context->CSSetUnorderedAccessViews(0, 1, &nullUAV, nullptr);
         }
 
-        // 정리
         Context->CSSetShader(nullptr, nullptr, 0);
     }
 
@@ -984,12 +1006,11 @@ namespace Graphics
             if (SUCCEEDED(Context->Map(CullParamBuffer.Get(), 0, D3D11_MAP_WRITE_DISCARD, 0, &mr)))
             {
                 auto* p = static_cast<FCullParams*>(mr.pData);
-                DirectX::XMStoreFloat4x4(&p->ViewProj,
-                    DirectX::XMMatrixTranspose(ViewProj)); // HLSL row_major이므로 Transpose
+                DirectX::XMStoreFloat4x4(&p->ViewProj, ViewProj);
                 p->ObjectCount = Count;
                 p->HiZMipLevels = HiZMipCount - 1;
-                p->HiZTexelWidth = 1.0f / static_cast<float>(HiZWidth);
-                p->HiZTexelHeight = 1.0f / static_cast<float>(HiZHeight);
+                p->HiZTexelWidth = static_cast<float>(HiZWidth);
+                p->HiZTexelHeight = static_cast<float>(HiZHeight);
                 Context->Unmap(CullParamBuffer.Get(), 0);
             }
         }
@@ -1000,10 +1021,9 @@ namespace Graphics
         Context->CSSetShaderResources(0, 1, BoundsSRV.GetAddressOf());
         Context->CSSetShaderResources(1, 1, HiZSRV.GetAddressOf());
         Context->CSSetSamplers(0, 1, PointClampSamplerState.GetAddressOf());
-        Context->CSSetUnorderedAccessViews(0, 1, VisibilityUAV.GetAddressOf(), nullptr);
         UINT clearValue[4] = { 0, 0, 0, 0 };
         Context->ClearUnorderedAccessViewUint(VisibilityUAV.Get(), clearValue);
-
+        Context->CSSetUnorderedAccessViews(0, 1, VisibilityUAV.GetAddressOf(), nullptr);
         Context->Dispatch((Count + 63) / 64, 1, 1);
 
         // 바인딩 해제
@@ -1141,6 +1161,8 @@ namespace Graphics
         }
 
         // ── Hi-Z 빌드 ────────────────────────────────────────────────────────────
+        ID3D11DepthStencilView* nullDSV = nullptr;
+        Context->OMSetRenderTargets(0, &nullRTV, nullDSV);  // DSV 해제
         BuildHiZMips();
 
         // ── Occlusion Cull ───────────────────────────────────────────────────────
@@ -1148,6 +1170,7 @@ namespace Graphics
 
         // ── Pass 2: 최종 렌더 (visible만) ────────────────────────────────────────
         const uint32_t SourceCount = SceneData->RenderCount;
+        CurrentMetrics.RenderedObjectCount = SourceCount;
         if (SourceCount == 0) return;
 
         const uint32_t AlignedConstantSize = 256;

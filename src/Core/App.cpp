@@ -281,7 +281,7 @@ void UApp::Update(float InDeltaTime)
 
     UniformCullingAndRenderCollect();
 
-	UpdateFramePerformanceMetrics(InDeltaTime);
+    UpdateFramePerformanceMetrics(InDeltaTime);
 
     Picking();
 	SceneManager->Update(InDeltaTime);

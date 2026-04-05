@@ -16,5 +16,7 @@ namespace Core
         uint64_t TotalPickingCycles = 0;
 
         uint64_t FrameIndex = 0;
+
+        uint64_t RenderedObjectCount = 0;
     };
 }

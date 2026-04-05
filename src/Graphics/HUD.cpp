@@ -150,10 +150,11 @@ namespace Graphics
         double TotalPickingMS = Core::FPlatformTime::ToMilliseconds(InMetrics.TotalPickingCycles);
 
         std::snprintf(Buffer, sizeof(Buffer),
-            "FPS: %.1f(%.1fms) Picking Time %.4fms",
+            "FPS: %.1f(%.1fms) Picking Time %.4fms, RenderObjects: %u",
             InMetrics.FramesPerSecond,
             FrameMS,
-            LastPickingMS);
+            LastPickingMS,
+            InMetrics.RenderedObjectCount);
 
         BatchText(Buffer, 10.0f, 10.0f);
     }
