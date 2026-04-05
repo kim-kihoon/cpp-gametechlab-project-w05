@@ -18,21 +18,21 @@ namespace Graphics
 {
 namespace
 {
-struct FPerFrameConstants
+struct alignas(16) FPerFrameConstants
 {
     DirectX::XMFLOAT4X4 VP;
     DirectX::XMFLOAT4 CR;
     DirectX::XMFLOAT4 CU;
     DirectX::XMFLOAT4 CP;
 };
-struct FPerObjectConstants
+struct alignas(16) FPerObjectConstants
 {
     DirectX::XMFLOAT4 R0;
     DirectX::XMFLOAT4 R1;
     DirectX::XMFLOAT4 R2;
     DirectX::XMFLOAT4 PD;
 };
-struct FMaterialConstants
+struct alignas(16) FMaterialConstants
 {
     DirectX::XMFLOAT4 BC;
 };
@@ -147,9 +147,10 @@ bool LoadObjMeshData(const std::wstring& path, std::vector<URenderer::FMeshVerte
             }
         }
     }
+    const std::wstring MeshBase = Core::FPathManager::GetMeshPath();
     texPath = (path.find(L"bitten") != std::string::npos)
-                  ? L"Data/JungleApples/Bitten_Apple_tgyociqpa_Mid_2K_BaseColor.jpg"
-                  : L"Data/JungleApples/Freshly_Bitten_Apple_tgzpdhlpa_Mid_2K_BaseColor.jpg";
+                  ? MeshBase + L"Bitten_Apple_tgyociqpa_Mid_2K_BaseColor.jpg"
+                  : MeshBase + L"Freshly_Bitten_Apple_tgzpdhlpa_Mid_2K_BaseColor.jpg";
     return !verts.empty();
 }
 
