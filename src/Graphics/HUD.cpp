@@ -150,12 +150,15 @@ namespace Graphics
 
         double LastPickingMS = Core::FPlatformTime::ToMilliseconds(InMetrics.LastPickingCycles);
         double TotalPickingMS = Core::FPlatformTime::ToMilliseconds(InMetrics.TotalPickingCycles);
+        double AvgPickingMS = (InMetrics.TotalPickCount > 0) ? (TotalPickingMS / static_cast<double>(InMetrics.TotalPickCount)) : 0.0;
 
         std::snprintf(Buffer, sizeof(Buffer),
-            "FPS: %.1f(%.1fms) Picking Time %.4fms",
+            "FPS: %.1f(%.1fms) Pick: L:%.4fms A:%.4fms T:%.4fms",
             InMetrics.FramesPerSecond,
             FrameMS,
-            LastPickingMS);
+            LastPickingMS,
+            AvgPickingMS,
+            TotalPickingMS);
 
         std::snprintf(Buffer2, sizeof(Buffer2),
             "BVH Tests -> Nodes: %u, Object AABBs: %u",

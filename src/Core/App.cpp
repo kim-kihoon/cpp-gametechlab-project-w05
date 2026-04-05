@@ -397,7 +397,7 @@ void UApp::Picking()
         Core::FScopeCycleCounter pickCounter(Core::TStatId{});
 
         // 4) 전체 Picking 횟수 누적
-        ++TotalPickCount;
+        ++Core::GPerformanceMetrics.TotalPickCount;
 
         // 5) 모든 오브젝트(프리미티브)에 대해 충돌 판정
         uint32_t HitIndex = 0;

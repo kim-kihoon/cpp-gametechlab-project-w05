@@ -14,6 +14,7 @@ namespace Core
         // Picking 관련 정밀 계측 (Cycles 단위)
         uint64_t LastPickingCycles = 0;
         uint64_t TotalPickingCycles = 0;
+        uint64_t TotalPickCount = 0;
 
         uint64_t FrameIndex = 0;
 
