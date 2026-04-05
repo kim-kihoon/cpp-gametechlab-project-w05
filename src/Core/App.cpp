@@ -277,15 +277,15 @@ int UApp::Run()
 
 void UApp::Update(float InDeltaTime)
 {
-	UpdateCamera(InDeltaTime);
+    UpdateCamera(InDeltaTime);
 
     UniformCullingAndRenderCollect();
 
     UpdateFramePerformanceMetrics(InDeltaTime);
 
     Picking();
-	SceneManager->Update(InDeltaTime);
-	EditorLayer->Update(InDeltaTime);
+    SceneManager->Update(InDeltaTime);
+    EditorLayer->Update(InDeltaTime);
 }
 
 void UApp::UniformCullingAndRenderCollect()
@@ -383,7 +383,7 @@ void UApp::Picking()
             };
 
         uint32_t HitIndex = 0;
-        float HitDistance = 1000.0f; 
+        float HitDistance = 1000.0f;
 
         if (SceneManager->GetGrid()->Raycast(WorldRay, 1000.0f, HitIndex, HitDistance, PreciseTriangleTest))
         {
@@ -455,16 +455,16 @@ void UApp::UpdateFramePerformanceMetrics(float InDeltaTime)
     const float AverageFPS = (TitleUpdateAccumulator > 0.0f) ? (static_cast<float>(TitleUpdateFrames) / TitleUpdateAccumulator) : 0.0f;
     const float AverageFrameMilliseconds = (TitleUpdateFrames > 0) ? ((TitleUpdateAccumulator * 1000.0f) / static_cast<float>(TitleUpdateFrames)) : 0.0f;
 
-	const uint32_t TotalObjects = SceneManager->GetObjectCount();
-	const uint32_t VisibleObjects = SceneManager->GetVisibleObjectCount();
+    const uint32_t TotalObjects = SceneManager->GetObjectCount();
+    const uint32_t VisibleObjects = SceneManager->GetVisibleObjectCount();
 
     std::wostringstream TitleStream;
     TitleStream.precision(2);
     TitleStream << std::fixed
-                << L"Verstappen Engine | Scene Preview | FPS(avg): " << AverageFPS
-                << L" | Frame(ms): " << AverageFrameMilliseconds
-                << L" | FrustumVisible: " << VisibleObjects
-                << L"/" << TotalObjects;
+        << L"Verstappen Engine | Scene Preview | FPS(avg): " << AverageFPS
+        << L" | Frame(ms): " << AverageFrameMilliseconds
+        << L" | FrustumVisible: " << VisibleObjects
+        << L"/" << TotalObjects;
     ::SetWindowTextW(WindowHandle, TitleStream.str().c_str());
 
     TitleUpdateAccumulator = 0.0f;
