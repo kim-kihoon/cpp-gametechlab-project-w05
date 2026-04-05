@@ -1087,6 +1087,7 @@ namespace Graphics
 
     void URenderer::RenderScene(const Scene::USceneManager& InSceneManager)
     {
+        uint32_t DrawCount = 0;
         Scene::FSceneDataSOA* SceneData =
             const_cast<Scene::FSceneDataSOA*>(InSceneManager.GetSceneData());
 
@@ -1207,6 +1208,7 @@ namespace Graphics
                 Context->IASetVertexBuffers(0, 1, res.VertexBuffer.GetAddressOf(), &stride, &offset);
                 Context->IASetIndexBuffer(res.IndexBuffer.Get(), DXGI_FORMAT_R32_UINT, 0);
                 Context->DrawIndexed(res.IndexCount, 0, 0);
+                DrawCount++;
             }
         }
 
@@ -1331,6 +1333,7 @@ namespace Graphics
                     Context1->VSSetConstantBuffers1(1, 1, PerObjectBuffer.GetAddressOf(), &off, &cnt);
                 }
                 Context->DrawIndexed(res.IndexCount, 0, 0);
+                DrawCount++;
             }
         }
         auto t5 = std::chrono::high_resolution_clock::now();
@@ -1343,8 +1346,8 @@ namespace Graphics
             ms(t0, t1), ms(t1, t2), ms(t2, t3), ms(t3, t4), ms(t4, t5));
         OutputDebugStringA(buf);
 
-        sprintf_s(buf, "PrevVisible=%u  PrevInvisible=%u  Total=%u\n",
-            PrevVisibleCount, PrevInvisibleCount, TotalCount);
+        sprintf_s(buf, "DrawCount: %u PrevVisible=%u  PrevInvisible=%u  Total=%u\n",
+            DrawCount, PrevVisibleCount, PrevInvisibleCount, TotalCount);
         OutputDebugStringA(buf);
     }
 
