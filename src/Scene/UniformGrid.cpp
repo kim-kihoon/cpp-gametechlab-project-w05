@@ -352,7 +352,7 @@ namespace Scene
         }
     }
 
-    void UUniformGrid::QueryFrustum(const Math::FFrustum& Frustum, uint32_t* OutIndices, uint32_t& OutCount, uint32_t MaxCapacity)
+    /*void UUniformGrid::QueryFrustum(const Math::FFrustum& Frustum, uint32_t* OutIndices, uint32_t& OutCount, uint32_t MaxCapacity)
     {
         OutCount = 0;
         if (!SceneData || !OutIndices || MaxCapacity == 0 || Cells.empty()) return;
@@ -425,13 +425,17 @@ namespace Scene
                 }
             }
         }
-    }
+    }*/
 
     void UUniformGrid::CullingAndBuildRenderQueue(const Math::FFrustum& Frustum, const FLODSelectionContext& LODContext)
     {
-        if (!SceneData) return;
-        SceneData->ResetRenderQueue(); SceneData->IsVisible.fill(false);
+        if (!SceneData)
+            return;
+        SceneData->ResetRenderQueue();
+        SceneData->IsVisible.fill(false);
+
         const DirectX::XMFLOAT3& cam = LODContext.CameraPosition;
+        const float tanHalfFovY = (std::max)(LODContext.TanHalfFovY, 0.001f);
 
         const int minGX = std::clamp(static_cast<int>((Frustum.AABBMin.x - OriginX) * InvCellSize) - 1, 0, Width - 1);
         const int minGY = std::clamp(static_cast<int>((Frustum.AABBMin.y - OriginY) * InvCellSize) - 1, 0, Height - 1);
@@ -441,25 +445,26 @@ namespace Scene
         const int maxGZ = std::clamp(static_cast<int>((Frustum.AABBMax.z - OriginZ) * InvCellSize) + 1, 0, Depth - 1);
 
         ++CurrentVisitToken;
-        if (CurrentVisitToken == 0) { VisitTokens.fill(0); CurrentVisitToken = 1; }
+        if (CurrentVisitToken == 0)
+        {
+            VisitTokens.fill(0);
+            CurrentVisitToken = 1;
+        }
 
-        auto ProcessObject = [&](uint32_t oid) {
-            if (VisitTokens[oid] == CurrentVisitToken) return;
+        auto ProcessObject = [&](uint32_t oid)
+        {
+            if (VisitTokens[oid] == CurrentVisitToken)
+                return;
             VisitTokens[oid] = CurrentVisitToken;
 
-            const float centerX = (SceneData->MinX[oid] + SceneData->MaxX[oid]) * 0.5f;
-            const float centerY = (SceneData->MinY[oid] + SceneData->MaxY[oid]) * 0.5f;
-            const float centerZ = (SceneData->MinZ[oid] + SceneData->MaxZ[oid]) * 0.5f;
-            const float extentX = (SceneData->MaxX[oid] - SceneData->MinX[oid]) * 0.5f;
-            const float extentY = (SceneData->MaxY[oid] - SceneData->MinY[oid]) * 0.5f;
-            const float extentZ = (SceneData->MaxZ[oid] - SceneData->MinZ[oid]) * 0.5f;
-            const float radius = std::sqrt((extentX * extentX) + (extentY * extentY) + (extentZ * extentZ));
+            const float dx = SceneData->CenterX[oid] - cam.x;
+            const float dy = SceneData->CenterY[oid] - cam.y;
+            const float dz = SceneData->CenterZ[oid] - cam.z;
+            const float radius = SceneData->Radius[oid];
 
-            const float dx = centerX - cam.x;
-            const float dy = centerY - cam.y;
-            const float dz = centerZ - cam.z;
-            const float distance = (std::max)(std::sqrt((dx * dx) + (dy * dy) + (dz * dz)), MIN_DISTANCE_EPSILON);
-            const float tanHalfFovY = (std::max)(LODContext.TanHalfFovY, 0.001f);
+            const float distanceSq = (dx * dx) + (dy * dy) + (dz * dz);
+            const float distance = (std::max)(std::sqrt(distanceSq), MIN_DISTANCE_EPSILON);
+
             const float projectedSizePx = (radius * LODContext.ViewportHeight) / (distance * tanHalfFovY);
             const FLODSelectionContext adjustedLODContext = MakeJitteredLODContext(LODContext, oid);
 
@@ -473,30 +478,51 @@ namespace Scene
             SceneData->AddToRenderQueue(oid);
         };
 
-        for (int z = minGZ; z <= maxGZ; ++z) for (int y = minGY; y <= maxGY; ++y) for (int x = minGX; x <= maxGX; ++x) {
-            const FGridCell& Cell = Cells[x + (y * Width) + (z * Width * Height)];
-            if (Cell.Count == 0) continue;
-            const Math::ECullingResult cres = Frustum.TestBox(Cell.CellBox);
-            if (cres == Math::ECullingResult::Outside) continue;
+        for (int z = minGZ; z <= maxGZ; ++z)
+        {
+            for (int y = minGY; y <= maxGY; ++y)
+            {
+                for (int x = minGX; x <= maxGX; ++x)
+                {
+                    const FGridCell& Cell = Cells[x + (y * Width) + (z * Width * Height)];
+                    if (Cell.Count == 0)
+                        continue;
 
-            const uint32_t* Indices = &GlobalIndexBuffer[Cell.StartIndex];
-            uint32_t i = 0;
-            if (cres == Math::ECullingResult::FullyInside) {
-                for (; i < Cell.Count; ++i) ProcessObject(Indices[i]);
-            } else {
-                for (; i + 8 <= Cell.Count; i += 8) {
-                    uint32_t poff[8];
-                    uint32_t pcnt = Culling8ObjectsAVX2(
-                        SceneData->MinX.data(), SceneData->MinY.data(), SceneData->MinZ.data(), 
-                        SceneData->MaxX.data(), SceneData->MaxY.data(), SceneData->MaxZ.data(), 
-                        &Indices[i], Frustum, poff);
-                    for (uint32_t j = 0; j < pcnt; ++j) ProcessObject(Indices[i + poff[j]]);
-                }
-                for (; i < Cell.Count; ++i) {
-                    if (Frustum.TestBox(SceneData->MinX[Indices[i]], SceneData->MinY[Indices[i]], SceneData->MinZ[Indices[i]], SceneData->MaxX[Indices[i]], SceneData->MaxY[Indices[i]], SceneData->MaxZ[Indices[i]]) != Math::ECullingResult::Outside)
-                        ProcessObject(Indices[i]);
+                    const Math::ECullingResult cres = Frustum.TestBox(Cell.CellBox);
+                    if (cres == Math::ECullingResult::Outside)
+                        continue;
+
+                    const uint32_t* Indices = &GlobalIndexBuffer[Cell.StartIndex];
+                    uint32_t i = 0;
+
+                    if (cres == Math::ECullingResult::FullyInside)
+                    {
+                        for (; i < Cell.Count; ++i)
+                            ProcessObject(Indices[i]);
+                    }
+                    else
+                    {
+                        for (; i + 8 <= Cell.Count; i += 8)
+                        {
+                            uint32_t poff[8];
+                            uint32_t pcnt = Culling8ObjectsAVX2(SceneData->MinX.data(), SceneData->MinY.data(),
+                                                                SceneData->MinZ.data(), SceneData->MaxX.data(),
+                                                                SceneData->MaxY.data(), SceneData->MaxZ.data(),
+                                                                &Indices[i], Frustum, poff);
+                            for (uint32_t j = 0; j < pcnt; ++j)
+                                ProcessObject(Indices[i + poff[j]]);
+                        }
+                        for (; i < Cell.Count; ++i)
+                        {
+                            if (Frustum.TestBox(SceneData->MinX[Indices[i]], SceneData->MinY[Indices[i]],
+                                                SceneData->MinZ[Indices[i]], SceneData->MaxX[Indices[i]],
+                                                SceneData->MaxY[Indices[i]],
+                                                SceneData->MaxZ[Indices[i]]) != Math::ECullingResult::Outside)
+                                ProcessObject(Indices[i]);
+                        }
+                    }
                 }
             }
         }
     }
-}
+    }

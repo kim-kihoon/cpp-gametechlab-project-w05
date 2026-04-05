@@ -49,7 +49,7 @@ namespace Scene
         void BuildGrid();
 
         // void InsertObject(uint32_t ObjectIndex);
-        void QueryFrustum(const Math::FFrustum& Frustum, uint32_t* OutIndices, uint32_t& OutCount, uint32_t MaxCapacity);
+        // void QueryFrustum(const Math::FFrustum& Frustum, uint32_t* OutIndices, uint32_t& OutCount, uint32_t MaxCapacity);
 
         const std::vector<FGridCell>& GetCells() const { return Cells; }
 
@@ -133,33 +133,6 @@ namespace Scene
                             bHitInCell = true;
                         }
                     }
-                    /*// --- 1. AABB 광역 검사 (Broad Phase) ---
-                    float t1 = (SceneData->MinX[Idx] - Ray.Origin.x) * Ray.InvDirection.x;
-                    float t2 = (SceneData->MaxX[Idx] - Ray.Origin.x) * Ray.InvDirection.x;
-                    const float tMinX = (std::min)(t1, t2); const float tMaxX_Box = (std::max)(t1, t2);
-
-                    t1 = (SceneData->MinY[Idx] - Ray.Origin.y) * Ray.InvDirection.y;
-                    t2 = (SceneData->MaxY[Idx] - Ray.Origin.y) * Ray.InvDirection.y;
-                    const float tMinY = (std::min)(t1, t2); const float tMaxY_Box = (std::max)(t1, t2);
-
-                    t1 = (SceneData->MinZ[Idx] - Ray.Origin.z) * Ray.InvDirection.z;
-                    t2 = (SceneData->MaxZ[Idx] - Ray.Origin.z) * Ray.InvDirection.z;
-                    const float tMinZ = (std::min)(t1, t2); const float tMaxZ_Box = (std::max)(t1, t2);
-
-                    const float tNear = (std::max)((std::max)(tMinX, tMinY), tMinZ);
-                    const float tFar = (std::min)((std::min)(tMaxX_Box, tMaxY_Box), tMaxZ_Box);
-
-                    // 박스에 맞았다면!
-                    if (tNear <= tFar && tFar > 0.0f && tNear < ClosestHitInCell)
-                    {
-                        float PreciseDistance = ClosestHitInCell;
-                        if (NarrowPhaseTest(Idx, PreciseDistance) && PreciseDistance < ClosestHitInCell)
-                        {
-                            ClosestHitInCell = PreciseDistance;
-                            BestIndexInCell = Idx;
-                            bHitInCell = true;
-                        }
-                    }*/
                 }
 
                 if (bHitInCell)

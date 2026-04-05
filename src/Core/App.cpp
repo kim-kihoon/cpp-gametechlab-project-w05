@@ -236,7 +236,7 @@ bool UApp::Initialize(HINSTANCE InHInstance, int InCmdShow)
         GridReq.Spacing = 1.0f;
         SceneManager->SpawnStaticMeshGrid(GridReq);
     }
-
+    SceneManager->RebuildCentersAndRadii();
     Core::GPerformanceMetrics.CurrentStructure = SceneManager->DetermineOptimalStructure();
 
     FitCameraToScene(*SceneManager, CameraState, ScreenWidth, ScreenHeight);
@@ -527,8 +527,19 @@ void UApp::UpdateFramePerformanceMetrics(float InDeltaTime)
     const uint32_t TotalObjects = SceneManager->GetObjectCount();
     const uint32_t VisibleObjects = SceneManager->GetVisibleObjectCount();
 
-    std::wostringstream TitleStream;
-    TitleStream.precision(2);
+    // 렌더링 단계별 가공 데이터 (현재는 플레이스홀더, 실제 측정 로직 추가 가능)
+    Core::GPerformanceMetrics.SplitTime = 0.04f;
+    Core::GPerformanceMetrics.PrepassTime = 0.37f;
+    Core::GPerformanceMetrics.HiZTime = 0.00f;
+    Core::GPerformanceMetrics.CullTime = 0.13f;
+    Core::GPerformanceMetrics.DrawTime = 0.37f;
+
+    Core::GPerformanceMetrics.DrawCount = VisibleObjects;
+    Core::GPerformanceMetrics.TotalObjectsCount = TotalObjects;
+    Core::GPerformanceMetrics.PrevVisible = VisibleObjects; // 임시
+    Core::GPerformanceMetrics.PrevInvisible = TotalObjects - VisibleObjects;
+
+    std::wostringstream TitleStream;    TitleStream.precision(2);
     TitleStream << std::fixed
         << L"Verstappen Engine | Scene Preview | FPS(avg): " << AverageFPS
         << L" | Frame(ms): " << AverageFrameMilliseconds

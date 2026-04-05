@@ -58,11 +58,12 @@ namespace Scene
         static constexpr uint32_t GetMaxObjectCount() { return FSceneDataSOA::MAX_OBJECTS; }
 
         void BuildSceneBVH();
-
+        void RebuildCentersAndRadii();
         Core::ESpatialStructure DetermineOptimalStructure() const;
 
     private:
         void ResetSelectionState();
+       
 
         std::unique_ptr<FSceneDataSOA> SceneData;
         std::unique_ptr<UUniformGrid> Grid;

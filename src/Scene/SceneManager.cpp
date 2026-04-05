@@ -141,12 +141,14 @@ namespace Scene
         SceneData->CenterZ[ObjectIndex] = CZ;
         SceneData->Radius[ObjectIndex] = WorldRadius;
 
-        SceneData->MinX[ObjectIndex] = CX - DEFAULT_HALF_EXTENT;
-        SceneData->MinY[ObjectIndex] = CY - DEFAULT_HALF_EXTENT;
-        SceneData->MinZ[ObjectIndex] = CZ - DEFAULT_HALF_EXTENT;
-        SceneData->MaxX[ObjectIndex] = CX + DEFAULT_HALF_EXTENT;
-        SceneData->MaxY[ObjectIndex] = CY + DEFAULT_HALF_EXTENT;
-        SceneData->MaxZ[ObjectIndex] = CZ + DEFAULT_HALF_EXTENT;
+        const float ScaledExtent = DEFAULT_HALF_EXTENT * MaxScale;
+
+        SceneData->MinX[ObjectIndex] = CX - ScaledExtent;
+        SceneData->MinY[ObjectIndex] = CY - ScaledExtent;
+        SceneData->MinZ[ObjectIndex] = CZ - ScaledExtent;
+        SceneData->MaxX[ObjectIndex] = CX + ScaledExtent;
+        SceneData->MaxY[ObjectIndex] = CY + ScaledExtent;
+        SceneData->MaxZ[ObjectIndex] = CZ + ScaledExtent;
 
         // 3. 기타 메타데이터
         SceneData->MeshIDs[ObjectIndex] = InRequest.MeshID;
@@ -378,4 +380,26 @@ namespace Scene
     }
 
     void USceneManager::ResetSelectionState() { SelectionData = {}; }
-}
+
+void Scene::USceneManager::RebuildCentersAndRadii()
+    {
+        if (!SceneData)
+            return;
+
+        for (uint32_t i = 0; i < SceneData->TotalObjectCount; ++i)
+        {
+            float cx = (SceneData->MaxX[i] + SceneData->MinX[i]) * 0.5f;
+            float cy = (SceneData->MaxY[i] + SceneData->MinY[i]) * 0.5f;
+            float cz = (SceneData->MaxZ[i] + SceneData->MinZ[i]) * 0.5f;
+
+            float ex = (SceneData->MaxX[i] - SceneData->MinX[i]) * 0.5f;
+            float ey = (SceneData->MaxY[i] - SceneData->MinY[i]) * 0.5f;
+            float ez = (SceneData->MaxZ[i] - SceneData->MinZ[i]) * 0.5f;
+
+            SceneData->CenterX[i] = cx;
+            SceneData->CenterY[i] = cy;
+            SceneData->CenterZ[i] = cz;
+            SceneData->Radius[i] = std::sqrt((ex * ex) + (ey * ey) + (ez * ez));
+        }
+    }
+    }

@@ -1782,6 +1782,7 @@ namespace Graphics
         }
 
         auto t1 = std::chrono::high_resolution_clock::now();
+        CurrentMetrics.SplitTime = std::chrono::duration<float, std::milli>(t1 - t0).count();
 
         // ── Pass 1: PrevVisible Depth Prepass ────────────────────────────────────
         {
@@ -1846,11 +1847,13 @@ namespace Graphics
         }
 
         auto t2 = std::chrono::high_resolution_clock::now();
+        CurrentMetrics.PrepassTime = std::chrono::duration<float, std::milli>(t2 - t1).count();
 
         // ── Hi-Z 빌드 ────────────────────────────────────────────────────────────
         BuildHiZMips();
 
         auto t3 = std::chrono::high_resolution_clock::now();
+        CurrentMetrics.HiZTime = std::chrono::duration<float, std::milli>(t3 - t2).count();
 
         // ── Occlusion Cull (전체 오브젝트 대상) ──────────────────────────────────
         std::fill(PrevIsVisible.begin(), PrevIsVisible.end(), false);
@@ -1858,6 +1861,7 @@ namespace Graphics
         bHasPrevFrame = true;
 
         auto t4 = std::chrono::high_resolution_clock::now();
+        CurrentMetrics.CullTime = std::chrono::duration<float, std::milli>(t4 - t3).count();
 
         // ── Pass 2: 최종 컬러 렌더 (PrevVisible만) ───────────────────────────────
         const uint32_t FinalCount = PrevVisibleCount;
@@ -1887,7 +1891,7 @@ namespace Graphics
         uint8_t* FinalDest = static_cast<uint8_t*>(FinalMap.pData) + PerObjectRingBufferOffset;
         const uint32_t FinalBase = PerObjectRingBufferOffset;
 
-        static uint32_t SortedQueue[Scene::FSceneDataSOA::MAX_OBJECTS];
+        static uint32_t FinalSortedQueue[Scene::FSceneDataSOA::MAX_OBJECTS];
         std::array<uint32_t, RENDER_BUCKET_COUNT> MeshCounts = {};
         std::array<uint32_t, RENDER_BUCKET_COUNT> MeshOffsets = {};
 
@@ -1936,7 +1940,7 @@ namespace Graphics
             if (!GetRenderBucketIndex(SceneData->MeshIDs[oid], BucketIndex)) continue;
 
             const uint32_t sidx = TempOffsets[BucketIndex]++;
-            SortedQueue[sidx] = oid;
+            FinalSortedQueue[sidx] = oid;
 
             const Math::FPacked3x4Matrix& mat = SceneData->WorldMatrices[oid];
             FPerObjectConstants* dest = reinterpret_cast<FPerObjectConstants*>(
@@ -1990,6 +1994,26 @@ namespace Graphics
                 DrawCount++;
             }
         }
+        auto t5 = std::chrono::high_resolution_clock::now();
+        CurrentMetrics.DrawTime = std::chrono::duration<float, std::milli>(t5 - t4).count();
+
+        // 통계 업데이트
+        CurrentMetrics.DrawCount = DrawCount;
+        CurrentMetrics.TotalObjectsCount = InSceneManager.GetObjectCount();
+        CurrentMetrics.PrevVisible = PrevVisibleCount;
+        CurrentMetrics.PrevInvisible = PrevInvisibleCount;
+
+        // 글로벌 지표 동기화 (HUD용)
+        Core::GPerformanceMetrics.SplitTime = CurrentMetrics.SplitTime;
+        Core::GPerformanceMetrics.PrepassTime = CurrentMetrics.PrepassTime;
+        Core::GPerformanceMetrics.HiZTime = CurrentMetrics.HiZTime;
+        Core::GPerformanceMetrics.CullTime = CurrentMetrics.CullTime;
+        Core::GPerformanceMetrics.DrawTime = CurrentMetrics.DrawTime;
+        Core::GPerformanceMetrics.DrawCount = CurrentMetrics.DrawCount;
+        Core::GPerformanceMetrics.TotalObjectsCount = CurrentMetrics.TotalObjectsCount;
+        Core::GPerformanceMetrics.PrevVisible = CurrentMetrics.PrevVisible;
+        Core::GPerformanceMetrics.PrevInvisible = CurrentMetrics.PrevInvisible;
+
         // ── Billboard 렌더 ────────────────────────────────────────────────────────
         // (Billboard는 기존 RenderScene의 고-밀도 버전 로직과 동일하게 유지)
         Context->IASetInputLayout(BillboardLayout.Get());
@@ -2021,18 +2045,17 @@ namespace Graphics
             }
         }
 
-        auto t5 = std::chrono::high_resolution_clock::now();
 
         // ── 타이밍 로그 ──────────────────────────────────────────────────────────
         auto ms = [](auto a, auto b) { return std::chrono::duration<float, std::milli>(b - a).count(); };
         char buf[256];
-        sprintf_s(buf, "Split=%.2f  Prepass=%.2f  HiZ=%.2f  Cull=%.2f  Draw=%.2f\n", ms(t0, t1), ms(t1, t2), ms(t2, t3),
+        /*sprintf_s(buf, "Split=%.2f  Prepass=%.2f  HiZ=%.2f  Cull=%.2f  Draw=%.2f\n", ms(t0, t1), ms(t1, t2), ms(t2, t3),
                   ms(t3, t4), ms(t4, t5));
         OutputDebugStringA(buf);
 
         sprintf_s(buf, "DrawCount: %u  PrevVisible=%u  PrevInvisible=%u  Total=%u\n", DrawCount, PrevVisibleCount,
                   PrevInvisibleCount, TotalCount);
-        OutputDebugStringA(buf);
+        OutputDebugStringA(buf);*/
 
 
         // DrawDebugBVH(InSceneManager);

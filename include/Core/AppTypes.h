@@ -44,6 +44,19 @@ namespace Core
 
         ESpatialStructure CurrentStructure = ESpatialStructure::UniformGrid;
         uint64_t RenderedObjectCount = 0;
+
+        // 렌더링 단계별 소요 시간 (ms)
+        float SplitTime = 0.0f;
+        float PrepassTime = 0.0f;
+        float HiZTime = 0.0f;
+        float CullTime = 0.0f;
+        float DrawTime = 0.0f;
+
+        // 가시성 및 드로우 콜 통계
+        uint32_t DrawCount = 0;
+        uint32_t PrevVisible = 0;
+        uint32_t PrevInvisible = 0;
+        uint32_t TotalObjectsCount = 0;
     };
 
     // 전역 성능 지표
