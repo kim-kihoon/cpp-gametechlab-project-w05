@@ -2,9 +2,7 @@
 #include <Core/PlatformTime.h>
 #include <Graphics/Renderer.h>
 
-// FPlatformTime 정적 멤버 정의 (링크 에러 방지)
-double Core::FPlatformTime::GSecondsPerCycle = 0.0;
-bool Core::FPlatformTime::bInitialized = false;
+#include <Scene/SceneTypes.h>
 #include <Math/Frustum.h>
 #include <Scene/AssetLoader.h>
 #include <Scene/SceneData.h>
@@ -18,6 +16,11 @@ bool Core::FPlatformTime::bInitialized = false;
 #include <limits>
 #include <sstream>
 #include <windowsx.h>
+
+namespace Core
+{
+    FFramePerformanceMetrics GPerformanceMetrics;
+}
 
 namespace
 {
@@ -234,6 +237,8 @@ bool UApp::Initialize(HINSTANCE InHInstance, int InCmdShow)
         SceneManager->SpawnStaticMeshGrid(GridReq);
     }
 
+    Core::GPerformanceMetrics.CurrentStructure = SceneManager->DetermineOptimalStructure();
+
     FitCameraToScene(*SceneManager, CameraState, ScreenWidth, ScreenHeight);
     Renderer->SetCameraState(CameraState);
 
@@ -277,20 +282,20 @@ int UApp::Run()
 
 void UApp::Update(float InDeltaTime)
 {
-	UpdateCamera(InDeltaTime);
+    UpdateCamera(InDeltaTime);
 
     UniformCullingAndRenderCollect();
 
-	UpdateFramePerformanceMetrics(InDeltaTime);
+    UpdateFramePerformanceMetrics(InDeltaTime);
 
     Picking();
-	SceneManager->Update(InDeltaTime);
-	EditorLayer->Update(InDeltaTime);
+    SceneManager->Update(InDeltaTime);
+    EditorLayer->Update(InDeltaTime);
 }
 
 void UApp::UniformCullingAndRenderCollect()
 {
-    if (SceneManager && SceneManager->GetGrid() != nullptr)
+    if (SceneManager)
     {
         Math::FMatrix View = BuildCameraViewMatrix(CameraState);
         Math::FMatrix Proj = BuildCameraProjectionMatrix(CameraState, ScreenWidth, ScreenHeight);
@@ -298,107 +303,143 @@ void UApp::UniformCullingAndRenderCollect()
         Math::FFrustum CameraFrustum;
         CameraFrustum.Update(View, Proj);
 
-        Scene::FSceneDataSOA* SceneData = SceneManager->GetSceneData();
+        /*Scene::FSceneDataSOA* SceneData = SceneManager->GetSceneData();
         SceneData->ResetRenderQueue();
         SceneData->IsVisible.fill(false);
 
-        SceneManager->GetGrid()->QueryFrustum(
-            CameraFrustum,
-            SceneData->RenderQueue.data(),
-            SceneData->RenderCount,
-            Scene::FSceneDataSOA::MAX_OBJECTS
-        );
+        if (Core::GPerformanceMetrics.CurrentStructure == Core::ESpatialStructure::UniformGrid)
+        {
+            SceneManager->GetGrid()->QueryFrustum(
+                CameraFrustum,
+                SceneData->RenderQueue.data(),
+                SceneData->RenderCount,
+                Scene::FSceneDataSOA::MAX_OBJECTS
+            );
+        }
+        else
+        {
+            SceneManager->GetSceneBVH()->QueryFrustum(
+                CameraFrustum,
+                SceneData->RenderQueue.data(),
+                SceneData->RenderCount,
+                Scene::FSceneDataSOA::MAX_OBJECTS
+            );
+        }
 
         for (uint32_t QueueIndex = 0; QueueIndex < SceneData->RenderCount; ++QueueIndex)
         {
             SceneData->IsVisible[SceneData->RenderQueue[QueueIndex]] = true;
-        }
+        }*/
+        Scene::FLODSelectionContext LODContext = {};
+        LODContext.CameraPosition = CameraState.Position;
+        LODContext.ViewportHeight = static_cast<float>((std::max)(ScreenHeight, 1));
+        LODContext.TanHalfFovY = std::tan(DirectX::XMConvertToRadians(CameraState.FOVDegrees) * 0.5f);
+
+        // 최적화된 컬링 및 LOD 빌드 함수 호출
+        SceneManager->GetGrid()->CullingAndBuildRenderQueue(CameraFrustum, LODContext);
+    }
+}
+
+bool UApp::CheckHit(const DirectX::XMFLOAT3& cameraPosition, const Math::FRay& pickRay, uint32_t& OutHitIndex)
+{
+    float HitDistance = 1000.0f;
+
+    auto PreciseTriangleTest = [&](uint32_t ObjIndex, float& OutHitDistance) -> bool
+        {
+            const Scene::FSceneDataSOA* SceneData = SceneManager->GetSceneData();
+            uint32_t MeshID = SceneData->MeshIDs[ObjIndex];
+
+            const auto* MeshRes = Renderer->GetMeshResource(MeshID);
+            if (!MeshRes || MeshRes->SourceIndices.empty()) return false;
+
+            const auto& PMat = SceneData->WorldMatrices[ObjIndex];
+            DirectX::XMMATRIX WorldMat = DirectX::XMMatrixSet(
+                DirectX::XMVectorGetX(PMat.Row0), DirectX::XMVectorGetY(PMat.Row0), DirectX::XMVectorGetZ(PMat.Row0), 0.0f,
+                DirectX::XMVectorGetX(PMat.Row1), DirectX::XMVectorGetY(PMat.Row1), DirectX::XMVectorGetZ(PMat.Row1), 0.0f,
+                DirectX::XMVectorGetX(PMat.Row2), DirectX::XMVectorGetY(PMat.Row2), DirectX::XMVectorGetZ(PMat.Row2), 0.0f,
+                DirectX::XMVectorGetW(PMat.Row0), DirectX::XMVectorGetW(PMat.Row1), DirectX::XMVectorGetW(PMat.Row2), 1.0f);
+
+            DirectX::XMVECTOR Det;
+            DirectX::XMMATRIX InvWorld = DirectX::XMMatrixInverse(&Det, WorldMat);
+
+            DirectX::XMVECTOR LocalOrigin = DirectX::XMVector3TransformCoord(DirectX::XMLoadFloat3(&pickRay.Origin), InvWorld);
+            DirectX::XMVECTOR LocalDir = DirectX::XMVector3TransformNormal(DirectX::XMLoadFloat3(&pickRay.Direction), InvWorld);
+            LocalDir = DirectX::XMVector3Normalize(LocalDir);
+
+            DirectX::XMFLOAT3 RayOrigin, RayDir;
+            DirectX::XMStoreFloat3(&RayOrigin, LocalOrigin);
+            DirectX::XMStoreFloat3(&RayDir, LocalDir);
+            Math::FRay LocalRay(RayOrigin, RayDir);
+
+            bool bHit = false;
+            float ClosestWorldT = OutHitDistance;
+
+            float LocalT = 0.0f;
+            if (MeshRes->Raycast(LocalRay, LocalT))
+            {
+                DirectX::XMVECTOR LocalIntersection = DirectX::XMVectorAdd(LocalOrigin, DirectX::XMVectorScale(LocalDir, LocalT));
+                DirectX::XMVECTOR WorldIntersection = DirectX::XMVector3TransformCoord(LocalIntersection, WorldMat);
+
+                DirectX::XMVECTOR DistVec = DirectX::XMVectorSubtract(WorldIntersection, DirectX::XMLoadFloat3(&pickRay.Origin));
+                float WorldT = DirectX::XMVectorGetX(DirectX::XMVector3Length(DistVec));
+
+                if (WorldT < ClosestWorldT)
+                {
+                    ClosestWorldT = WorldT;
+                    bHit = true;
+                }
+            }
+
+            if (bHit) OutHitDistance = ClosestWorldT;
+            return bHit;
+        };
+
+    if (Core::GPerformanceMetrics.CurrentStructure == Core::ESpatialStructure::UniformGrid)
+    {
+        return SceneManager->GetGrid()->Raycast(pickRay, 1000.0f, OutHitIndex, HitDistance, PreciseTriangleTest);
+    }
+    else
+    {
+        return SceneManager->GetSceneBVH()->Raycast(pickRay, 1000.0f, OutHitIndex, HitDistance, PreciseTriangleTest);
     }
 }
 
 void UApp::Picking()
 {
-    if (bPendingPick && SceneManager && SceneManager->GetGrid())
+    if (bPendingPick && SceneManager)
     {
-        Math::FRay WorldRay = CalculatePickingRay(CameraState, PickPosition.x, PickPosition.y, ScreenWidth, ScreenHeight);
+        if (Core::GPerformanceMetrics.CurrentStructure == Core::ESpatialStructure::UniformGrid)
+        {
+            Core::GPerformanceMetrics.GridCellTestCount = 0;
+            Core::GPerformanceMetrics.GridObjectAABBTestCount = 0;
+        }
+        else
+        {
+            Core::GPerformanceMetrics.BVHNodeTestCount = 0;
+            Core::GPerformanceMetrics.ObjectAABBTestCount = 0;
+        }
 
-        auto PreciseTriangleTest = [&](uint32_t ObjIndex, float& OutHitDistance) -> bool
-            {
-                const Scene::FSceneDataSOA* SceneData = SceneManager->GetSceneData();
-                uint32_t MeshID = SceneData->MeshIDs[ObjIndex];
+        // 1) 마우스 화면 좌표 획득
+        int screenX = PickPosition.x;
+        int screenY = PickPosition.y;
 
-                const auto* MeshRes = Renderer->GetMeshResource(MeshID);
-                if (!MeshRes || MeshRes->SourceIndices.empty()) return false;
+        // 2) 화면 좌표 -> 월드 좌표로의 픽 레이(Pick Ray) 계산
+        Math::FRay pickRay = CalculatePickingRay(CameraState, screenX, screenY, ScreenWidth, ScreenHeight);
 
-                const auto& PMat = SceneData->WorldMatrices[ObjIndex];
-                DirectX::XMMATRIX WorldMat = DirectX::XMMatrixSet(
-                    DirectX::XMVectorGetX(PMat.Row0), DirectX::XMVectorGetY(PMat.Row0), DirectX::XMVectorGetZ(PMat.Row0), 0.0f,
-                    DirectX::XMVectorGetX(PMat.Row1), DirectX::XMVectorGetY(PMat.Row1), DirectX::XMVectorGetZ(PMat.Row1), 0.0f,
-                    DirectX::XMVectorGetX(PMat.Row2), DirectX::XMVectorGetY(PMat.Row2), DirectX::XMVectorGetZ(PMat.Row2), 0.0f,
-                    DirectX::XMVectorGetW(PMat.Row0), DirectX::XMVectorGetW(PMat.Row1), DirectX::XMVectorGetW(PMat.Row2), 1.0f);
+        // 3) 퍼포먼스 측정용 카운터 시작
+        Core::FScopeCycleCounter pickCounter(Core::TStatId{});
 
-                DirectX::XMVECTOR Det;
-                DirectX::XMMATRIX InvWorld = DirectX::XMMatrixInverse(&Det, WorldMat);
+        // 4) 전체 Picking 횟수 누적
+        ++Core::GPerformanceMetrics.TotalPickCount;
 
-                DirectX::XMVECTOR LocalOrigin = DirectX::XMVector3TransformCoord(DirectX::XMLoadFloat3(&WorldRay.Origin), InvWorld);
-                DirectX::XMVECTOR LocalDir = DirectX::XMVector3TransformNormal(DirectX::XMLoadFloat3(&WorldRay.Direction), InvWorld);
-                LocalDir = DirectX::XMVector3Normalize(LocalDir);
-
-                bool bHit = false;
-                float ClosestWorldT = OutHitDistance;
-
-                for (size_t i = 0; i < MeshRes->SourceIndices.size(); i += 3)
-                {
-                    uint32_t i0 = MeshRes->SourceIndices[i];
-                    uint32_t i1 = MeshRes->SourceIndices[i + 1];
-                    uint32_t i2 = MeshRes->SourceIndices[i + 2];
-
-                    DirectX::XMVECTOR V0 = DirectX::XMLoadFloat3(&MeshRes->SourceVertices[i0].Position);
-                    DirectX::XMVECTOR V1 = DirectX::XMLoadFloat3(&MeshRes->SourceVertices[i1].Position);
-                    DirectX::XMVECTOR V2 = DirectX::XMLoadFloat3(&MeshRes->SourceVertices[i2].Position);
-
-                    DirectX::XMVECTOR Edge1 = DirectX::XMVectorSubtract(V1, V0);
-                    DirectX::XMVECTOR Edge2 = DirectX::XMVectorSubtract(V2, V0);
-                    DirectX::XMVECTOR H = DirectX::XMVector3Cross(LocalDir, Edge2);
-
-                    float A = DirectX::XMVectorGetX(DirectX::XMVector3Dot(Edge1, H));
-                    if (A > -0.00001f && A < 0.00001f) continue;
-
-                    float F = 1.0f / A;
-                    DirectX::XMVECTOR S = DirectX::XMVectorSubtract(LocalOrigin, V0);
-                    float U = F * DirectX::XMVectorGetX(DirectX::XMVector3Dot(S, H));
-                    if (U < 0.0f || U > 1.0f) continue;
-
-                    DirectX::XMVECTOR Q = DirectX::XMVector3Cross(S, Edge1);
-                    float V = F * DirectX::XMVectorGetX(DirectX::XMVector3Dot(LocalDir, Q));
-                    if (V < 0.0f || U + V > 1.0f) continue;
-
-                    float LocalT = F * DirectX::XMVectorGetX(DirectX::XMVector3Dot(Edge2, Q));
-
-                    if (LocalT > 0.00001f)
-                    {
-                        DirectX::XMVECTOR LocalIntersection = DirectX::XMVectorAdd(LocalOrigin, DirectX::XMVectorScale(LocalDir, LocalT));
-                        DirectX::XMVECTOR WorldIntersection = DirectX::XMVector3TransformCoord(LocalIntersection, WorldMat);
-
-                        DirectX::XMVECTOR DistVec = DirectX::XMVectorSubtract(WorldIntersection, DirectX::XMLoadFloat3(&WorldRay.Origin));
-                        float WorldT = DirectX::XMVectorGetX(DirectX::XMVector3Length(DistVec));
-
-                        if (WorldT < ClosestWorldT)
-                        {
-                            ClosestWorldT = WorldT;
-                            bHit = true;
-                        }
-                    }
-                }
-
-                if (bHit) OutHitDistance = ClosestWorldT;
-                return bHit;
-            };
-
+        // 5) 모든 오브젝트(프리미티브)에 대해 충돌 판정
         uint32_t HitIndex = 0;
-        float HitDistance = 1000.0f; 
 
-        if (SceneManager->GetGrid()->Raycast(WorldRay, 1000.0f, HitIndex, HitDistance, PreciseTriangleTest))
+        bool isHit = CheckHit(CameraState.Position, pickRay, HitIndex);
+        float HitDistance = 1000.0f;
+
+        // 필요 시 'isHit' 결과를 활용해 추가 로직 처리
+        if (isHit)
         {
             SceneManager->SelectObject(HitIndex);
         }
@@ -407,8 +448,23 @@ void UApp::Picking()
             SceneManager->ClearSelection();
         }
 
-        // 전체 소요 시간 기록: 현재 사이클 - 클릭 시작 사이클
-        FramePerformanceMetrics.LastPickingCycles = Core::FPlatformTime::Cycles64() - PickStartCycles;
+        // 6) 퍼포먼스 측정 종료 및 시간 누적
+        uint64_t LastPickTime = pickCounter.Finish();
+        Core::GPerformanceMetrics.LastPickingCycles = LastPickTime;
+        Core::GPerformanceMetrics.TotalPickingCycles += LastPickTime;
+
+        if (Core::GPerformanceMetrics.CurrentStructure == Core::ESpatialStructure::UniformGrid)
+        {
+            Core::GPerformanceMetrics.GridLastPickingCycles = LastPickTime;
+            Core::GPerformanceMetrics.GridTotalPickingCycles += LastPickTime;
+            Core::GPerformanceMetrics.GridTotalPickCount++;
+        }
+        else
+        {
+            Core::GPerformanceMetrics.BVHLastPickingCycles = LastPickTime;
+            Core::GPerformanceMetrics.BVHTotalPickingCycles += LastPickTime;
+            Core::GPerformanceMetrics.BVHTotalPickCount++;
+        }
 
         bPendingPick = false;
     }
@@ -416,7 +472,7 @@ void UApp::Picking()
 
 void UApp::Render()
 {
-    Renderer->UpdatePerformanceMetrics(FramePerformanceMetrics); // 추가: 성능 데이터 전달
+    Renderer->UpdatePerformanceMetrics(Core::GPerformanceMetrics); // 추가: 성능 데이터 전달
     Renderer->SetCameraState(CameraState);
     Renderer->BeginFrame();
     Renderer->RenderScene(*SceneManager);
@@ -449,10 +505,10 @@ void UApp::UpdateCamera(float InDeltaTime)
 
 void UApp::UpdateFramePerformanceMetrics(float InDeltaTime)
 {
-    FramePerformanceMetrics.DeltaTimeSeconds = InDeltaTime;
-    //     FramePerformanceMetrics.ElapsedTimeMilliseconds = InDeltaTime * 1000.0f;
-    FramePerformanceMetrics.FramesPerSecond = (InDeltaTime > 0.0f) ? (1.0f / InDeltaTime) : 0.0f;
-    ++FramePerformanceMetrics.FrameIndex;
+    Core::GPerformanceMetrics.DeltaTimeSeconds = InDeltaTime;
+    //     Core::GPerformanceMetrics.ElapsedTimeMilliseconds = InDeltaTime * 1000.0f;
+    Core::GPerformanceMetrics.FramesPerSecond = (InDeltaTime > 0.0f) ? (1.0f / InDeltaTime) : 0.0f;
+    ++Core::GPerformanceMetrics.FrameIndex;
 
     static float TitleUpdateAccumulator = 0.0f;
     static uint64_t TitleUpdateFrames = 0;
@@ -468,16 +524,16 @@ void UApp::UpdateFramePerformanceMetrics(float InDeltaTime)
     const float AverageFPS = (TitleUpdateAccumulator > 0.0f) ? (static_cast<float>(TitleUpdateFrames) / TitleUpdateAccumulator) : 0.0f;
     const float AverageFrameMilliseconds = (TitleUpdateFrames > 0) ? ((TitleUpdateAccumulator * 1000.0f) / static_cast<float>(TitleUpdateFrames)) : 0.0f;
 
-	const uint32_t TotalObjects = SceneManager->GetObjectCount();
-	const uint32_t VisibleObjects = SceneManager->GetVisibleObjectCount();
+    const uint32_t TotalObjects = SceneManager->GetObjectCount();
+    const uint32_t VisibleObjects = SceneManager->GetVisibleObjectCount();
 
     std::wostringstream TitleStream;
     TitleStream.precision(2);
     TitleStream << std::fixed
-                << L"Verstappen Engine | Scene Preview | FPS(avg): " << AverageFPS
-                << L" | Frame(ms): " << AverageFrameMilliseconds
-                << L" | FrustumVisible: " << VisibleObjects
-                << L"/" << TotalObjects;
+        << L"Verstappen Engine | Scene Preview | FPS(avg): " << AverageFPS
+        << L" | Frame(ms): " << AverageFrameMilliseconds
+        << L" | FrustumVisible: " << VisibleObjects
+        << L"/" << TotalObjects;
     ::SetWindowTextW(WindowHandle, TitleStream.str().c_str());
 
     TitleUpdateAccumulator = 0.0f;
@@ -528,6 +584,41 @@ LRESULT CALLBACK UApp::WindowProc(HWND hWnd, UINT Message, WPARAM wParam, LPARAM
         {
             AppInstance->bIsRightMouseLooking = false;
             ::ReleaseCapture();
+        }
+        return 0;
+    case WM_KEYDOWN:
+        if (AppInstance != nullptr)
+        {
+            if (wParam == '1')
+            {
+                Core::GPerformanceMetrics.CurrentStructure = Core::ESpatialStructure::UniformGrid;
+            }
+            else if (wParam == '2')
+            {
+                Core::GPerformanceMetrics.CurrentStructure = Core::ESpatialStructure::SceneBVH;
+            }
+            else if (wParam == 'R')
+            {
+                Core::GPerformanceMetrics.LastPickingCycles = 0;
+                Core::GPerformanceMetrics.TotalPickingCycles = 0;
+                Core::GPerformanceMetrics.TotalPickCount = 0;
+
+                Core::GPerformanceMetrics.GridLastPickingCycles = 0;
+                Core::GPerformanceMetrics.GridTotalPickingCycles = 0;
+                Core::GPerformanceMetrics.GridTotalPickCount = 0;
+
+                Core::GPerformanceMetrics.BVHLastPickingCycles = 0;
+                Core::GPerformanceMetrics.BVHTotalPickingCycles = 0;
+                Core::GPerformanceMetrics.BVHTotalPickCount = 0;
+
+                Core::GPerformanceMetrics.FrameIndex = 0;
+
+                Core::GPerformanceMetrics.BVHNodeTestCount = 0;
+                Core::GPerformanceMetrics.ObjectAABBTestCount = 0;
+
+                Core::GPerformanceMetrics.GridCellTestCount = 0;
+                Core::GPerformanceMetrics.GridObjectAABBTestCount = 0;
+            }
         }
         return 0;
     case WM_MOUSEMOVE:

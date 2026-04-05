@@ -21,6 +21,12 @@ namespace Math
         XMFLOAT3 AABBMin;
         XMFLOAT3 AABBMax;
 
+        // AVX2 최적화를 위한 평면별 컴포넌트 분리 저장
+        float SIMDPlanesX[6];
+        float SIMDPlanesY[6];
+        float SIMDPlanesZ[6];
+        float SIMDPlanesW[6];
+
         inline void Update(const FMatrix& View, const FMatrix& Projection)
         {
             BuildFromViewProjection(View, Projection);
@@ -39,41 +45,37 @@ namespace Math
         inline void BuildFromMatrix(const FMatrix& ViewProj)
         {
             FMatrix T = XMMatrixTranspose(ViewProj);
+            FVector C0 = T.r[0]; FVector C1 = T.r[1]; FVector C2 = T.r[2]; FVector C3 = T.r[3];
 
-            FVector C0 = T.r[0];
-            FVector C1 = T.r[1];
-            FVector C2 = T.r[2];
-            FVector C3 = T.r[3];
-
-            Planes[0] = XMPlaneNormalize(XMVectorAdd(C3, C0));
-            Planes[1] = XMPlaneNormalize(XMVectorSubtract(C3, C0));
-            Planes[2] = XMPlaneNormalize(XMVectorAdd(C3, C1));
-            Planes[3] = XMPlaneNormalize(XMVectorSubtract(C3, C1));
-            Planes[4] = XMPlaneNormalize(C2);
-            Planes[5] = XMPlaneNormalize(XMVectorSubtract(C3, C2));
-
-            FMatrix InvVP = XMMatrixInverse(nullptr, ViewProj);
-
-            FVector NDCCorners[8] = {
-                XMVectorSet(-1.0f, -1.0f, 0.0f, 1.0f), XMVectorSet(1.0f, -1.0f, 0.0f, 1.0f),
-                XMVectorSet(-1.0f,  1.0f, 0.0f, 1.0f), XMVectorSet(1.0f,  1.0f, 0.0f, 1.0f),
-                XMVectorSet(-1.0f, -1.0f, 1.0f, 1.0f), XMVectorSet(1.0f, -1.0f, 1.0f, 1.0f),
-                XMVectorSet(-1.0f,  1.0f, 1.0f, 1.0f), XMVectorSet(1.0f,  1.0f, 1.0f, 1.0f)
+            auto Extract = [&](int i, XMVECTOR p) {
+                XMVECTOR n = XMPlaneNormalize(p);
+                SIMDPlanesX[i] = XMVectorGetX(n);
+                SIMDPlanesY[i] = XMVectorGetY(n);
+                SIMDPlanesZ[i] = XMVectorGetZ(n);
+                SIMDPlanesW[i] = XMVectorGetW(n);
+                Planes[i] = n;
             };
 
-            FVector vMin = XMVectorReplicate(FLT_MAX);
-            FVector vMax = XMVectorReplicate(-FLT_MAX);
+            Extract(0, XMVectorAdd(C3, C0));      // Left
+            Extract(1, XMVectorSubtract(C3, C0)); // Right
+            Extract(2, XMVectorAdd(C3, C1));      // Bottom
+            Extract(3, XMVectorSubtract(C3, C1)); // Top
+            Extract(4, C2);                       // Near
+            Extract(5, XMVectorSubtract(C3, C2)); // Far
 
-            for (int i = 0; i < 8; i++)
-            {
-                Corners[i] = XMVector3TransformCoord(NDCCorners[i], InvVP);
-
-                vMin = XMVectorMin(vMin, Corners[i]);
-                vMax = XMVectorMax(vMax, Corners[i]);
+            FMatrix InvVP = XMMatrixInverse(nullptr, ViewProj);
+            FVector NDC[8] = {
+                XMVectorSet(-1,-1,0,1), XMVectorSet(1,-1,0,1), XMVectorSet(-1,1,0,1), XMVectorSet(1,1,0,1),
+                XMVectorSet(-1,-1,1,1), XMVectorSet(1,-1,1,1), XMVectorSet(-1,1,1,1), XMVectorSet(1,1,1,1)
+            };
+            FVector vMin = XMVectorReplicate(FLT_MAX), vMax = XMVectorReplicate(-FLT_MAX);
+            for (int i = 0; i < 8; i++) {
+                Corners[i] = XMVector3TransformCoord(NDC[i], InvVP);
+                vMin = XMVectorMin(vMin, Corners[i]); vMax = XMVectorMax(vMax, Corners[i]);
             }
-
-            XMStoreFloat3(&AABBMin, vMin);
-            XMStoreFloat3(&AABBMax, vMax);
+            FVector vPad = XMVectorSet(1.0f, 1.0f, 1.0f, 0.0f);
+            XMStoreFloat3(&AABBMin, XMVectorSubtract(vMin, vPad));
+            XMStoreFloat3(&AABBMax, XMVectorAdd(vMax, vPad));
         }
 
         // SoA Min/Max 데이터를 DirectX API에 맞게 Center/Extents로 변환 -> SIMD계산에 좋지는 않지만 나쁘지 않다고 함. 
@@ -103,6 +105,16 @@ namespace Math
         inline ECullingResult TestBox(const FBox& Box) const
         {
             return TestBox(Box.Min.x, Box.Min.y, Box.Min.z, Box.Max.x, Box.Max.y, Box.Max.z);
+        }
+
+        inline Math::ECullingResult TestSphere(float CenterX, float CenterY, float CenterZ, float Radius) const
+        {
+            const DirectX::BoundingSphere Sphere(DirectX::XMFLOAT3(CenterX, CenterY, CenterZ), Radius);
+            const DirectX::ContainmentType Result = NativeFrustum.Contains(Sphere);
+
+            if (Result == DirectX::DISJOINT) return ECullingResult::Outside;
+            if (Result == DirectX::CONTAINS) return ECullingResult::FullyInside;
+            return ECullingResult::Intersecting;
         }
     };
 }

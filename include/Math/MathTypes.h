@@ -1,5 +1,6 @@
 ﻿#pragma once
 #include <DirectXMath.h>
+#include <algorithm>
 #include <cstdint>
 
 namespace Math
@@ -36,6 +37,28 @@ namespace Math
     {
         XMFLOAT3 Min;
         XMFLOAT3 Max;
+
+        FBox() : Min(FLT_MAX, FLT_MAX, FLT_MAX), Max(-FLT_MAX, -FLT_MAX, -FLT_MAX) {}
+
+        void Expand(const XMFLOAT3& Point)
+        {
+            Min.x = (std::min)(Min.x, Point.x);
+            Min.y = (std::min)(Min.y, Point.y);
+            Min.z = (std::min)(Min.z, Point.z);
+            Max.x = (std::max)(Max.x, Point.x);
+            Max.y = (std::max)(Max.y, Point.y);
+            Max.z = (std::max)(Max.z, Point.z);
+        }
+
+        void Expand(const FBox& Other)
+        {
+            Min.x = (std::min)(Min.x, Other.Min.x);
+            Min.y = (std::min)(Min.y, Other.Min.y);
+            Min.z = (std::min)(Min.z, Other.Min.z);
+            Max.x = (std::max)(Max.x, Other.Max.x);
+            Max.y = (std::max)(Max.y, Other.Max.y);
+            Max.z = (std::max)(Max.z, Other.Max.z);
+        }
     };
 
 	struct FRay
@@ -57,5 +80,23 @@ namespace Math
 			InvDirection.y = 1.0f / (Direction.y != 0.0f ? Direction.y : 0.000001f);
 			InvDirection.z = 1.0f / (Direction.z != 0.0f ? Direction.z : 0.000001f);
 		}
+
+        bool Intersects(const FBox& Box, float& OutT) const
+        {
+            float t1 = (Box.Min.x - Origin.x) * InvDirection.x;
+            float t2 = (Box.Max.x - Origin.x) * InvDirection.x;
+            float t3 = (Box.Min.y - Origin.y) * InvDirection.y;
+            float t4 = (Box.Max.y - Origin.y) * InvDirection.y;
+            float t5 = (Box.Min.z - Origin.z) * InvDirection.z;
+            float t6 = (Box.Max.z - Origin.z) * InvDirection.z;
+
+            float tmin = (std::max)((std::max)((std::min)(t1, t2), (std::min)(t3, t4)), (std::min)(t5, t6));
+            float tmax = (std::min)((std::min)((std::max)(t1, t2), (std::max)(t3, t4)), (std::max)(t5, t6));
+
+            if (tmax < 0 || tmin > tmax) return false;
+            
+            OutT = (tmin < 0.0f) ? 0.0f : tmin;
+            return true;
+        }
 	};
 }
