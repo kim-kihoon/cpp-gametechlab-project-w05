@@ -11,7 +11,7 @@ namespace Scene
         constexpr float MIN_CELL_SIZE = 2.0f;
         constexpr float MAX_CELL_SIZE = 8.0f;
         // constexpr float CELL_SIZE_MULTIPLIER = 2.0f;
-        constexpr float CELL_SIZE_MULTIPLIER = 4.0f;
+        constexpr float CELL_SIZE_MULTIPLIER = 2.0f;
         constexpr float MIN_DISTANCE_EPSILON = 0.001f;
 
         // [AVX2 최적화] Gather 명령어를 사용하여 8개의 불연속적인 객체를 동시 검사
