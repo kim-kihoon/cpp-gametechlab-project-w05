@@ -10,6 +10,7 @@ namespace Math { struct FFrustum; }
 
 namespace Scene
 {
+    struct FSceneDataSOA;
     using namespace Math;
 
     typedef std::function<bool(uint32_t, float&)> NarrowPhaseFunc;
@@ -29,6 +30,8 @@ namespace Scene
     {
         std::vector<FSceneBVHNode> Nodes;
         std::vector<uint32_t> ObjectIndices;
+
+        const struct FSceneDataSOA* SceneData = nullptr;
 
         void Build(const struct FSceneDataSOA& SceneData);
         void QueryFrustum(const Math::FFrustum& Frustum, uint32_t* OutObjectIndices, uint32_t& OutCount, uint32_t MaxCount) const;

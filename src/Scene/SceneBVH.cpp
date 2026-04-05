@@ -1,4 +1,4 @@
-#include "Scene/SceneTypes.h"
+﻿#include "Scene/SceneTypes.h"
 #include "Scene/SceneData.h"
 #include "Math/Frustum.h"
 #include <Core/AppTypes.h>
@@ -8,12 +8,14 @@
 
 namespace Scene
 {
-    void FSceneBVH::Build(const FSceneDataSOA& SceneData)
+    void FSceneBVH::Build(const FSceneDataSOA& InSceneData)
     {
+        this->SceneData = &InSceneData;
+
         Nodes.clear();
         ObjectIndices.clear();
 
-        uint32_t Count = SceneData.TotalObjectCount;
+        uint32_t Count = SceneData->TotalObjectCount;
         if (Count == 0) return;
 
         ObjectIndices.reserve(Count);
@@ -36,8 +38,8 @@ namespace Scene
             for (uint32_t i = 0; i < State.ObjCount; ++i)
             {
                 uint32_t ObjIdx = ObjectIndices[State.ObjStart + i];
-                Bounds.Expand({ SceneData.MinX[ObjIdx], SceneData.MinY[ObjIdx], SceneData.MinZ[ObjIdx] });      
-                Bounds.Expand({ SceneData.MaxX[ObjIdx], SceneData.MaxY[ObjIdx], SceneData.MaxZ[ObjIdx] });      
+                Bounds.Expand({ SceneData->MinX[ObjIdx], SceneData->MinY[ObjIdx], SceneData->MinZ[ObjIdx] });
+                Bounds.Expand({ SceneData->MaxX[ObjIdx], SceneData->MaxY[ObjIdx], SceneData->MaxZ[ObjIdx] });
             }
             Nodes[State.NodeIndex].Bounds = Bounds;
 
@@ -58,18 +60,18 @@ namespace Scene
             for (uint32_t i = 0; i < State.ObjCount; ++i)
             {
                 uint32_t ObjIdx = ObjectIndices[State.ObjStart + i];
-                float Center = (Axis == 0) ? (SceneData.MinX[ObjIdx] + SceneData.MaxX[ObjIdx]) * 0.5f :
-                               (Axis == 1) ? (SceneData.MinY[ObjIdx] + SceneData.MaxY[ObjIdx]) * 0.5f :
-                                             (SceneData.MinZ[ObjIdx] + SceneData.MaxZ[ObjIdx]) * 0.5f;
+                float Center = (Axis == 0) ? (SceneData->MinX[ObjIdx] + SceneData->MaxX[ObjIdx]) * 0.5f :
+                               (Axis == 1) ? (SceneData->MinY[ObjIdx] + SceneData->MaxY[ObjIdx]) * 0.5f :
+                                             (SceneData->MinZ[ObjIdx] + SceneData->MaxZ[ObjIdx]) * 0.5f;
                 SplitPos += Center;
             }
             SplitPos /= (float)State.ObjCount;
 
             auto It = std::partition(ObjectIndices.begin() + State.ObjStart, ObjectIndices.begin() + State.ObjStart + State.ObjCount,
                 [&](uint32_t ObjIdx) {
-                    float Center = (Axis == 0) ? (SceneData.MinX[ObjIdx] + SceneData.MaxX[ObjIdx]) * 0.5f :
-                                   (Axis == 1) ? (SceneData.MinY[ObjIdx] + SceneData.MaxY[ObjIdx]) * 0.5f :
-                                                 (SceneData.MinZ[ObjIdx] + SceneData.MaxZ[ObjIdx]) * 0.5f;
+                    float Center = (Axis == 0) ? (SceneData->MinX[ObjIdx] + SceneData->MaxX[ObjIdx]) * 0.5f :
+                                   (Axis == 1) ? (SceneData->MinY[ObjIdx] + SceneData->MaxY[ObjIdx]) * 0.5f :
+                                                 (SceneData->MinZ[ObjIdx] + SceneData->MaxZ[ObjIdx]) * 0.5f;
                     return Center < SplitPos;
                 });
 
@@ -125,7 +127,17 @@ namespace Scene
                     {
                         for (uint32_t i = 0; i < SNode.ObjectCount; ++i)
                         {
-                            if (OutCount < MaxCount) OutObjectIndices[OutCount++] = ObjectIndices[SNode.ObjectIndex + i];
+                            uint32_t ObjIdx = ObjectIndices[Node.ObjectIndex + i];
+
+                            // 오브젝트 단위 Sphere Culling ---
+                            if (Frustum.TestSphere(
+                                SceneData->CenterX[ObjIdx],
+                                SceneData->CenterY[ObjIdx],
+                                SceneData->CenterZ[ObjIdx],
+                                SceneData->Radius[ObjIdx]) != Math::ECullingResult::Outside)
+                            {
+                                if (OutCount < MaxCount) OutObjectIndices[OutCount++] = ObjIdx;
+                            }
                         }
                     }
                     else
@@ -182,14 +194,37 @@ namespace Scene
                 for (uint32_t i = 0; i < Node.ObjectCount; ++i)
                 {
                     uint32_t ObjIdx = ObjectIndices[Node.ObjectIndex + i];
-                    float HitDist = NearestT;
-                    if (NarrowPhaseTest(ObjIdx, HitDist))
+
+                    //  오브젝트 단위 Sphere 검사
+                    const float dx = SceneData->CenterX[ObjIdx] - Ray.Origin.x;
+                    const float dy = SceneData->CenterY[ObjIdx] - Ray.Origin.y;
+                    const float dz = SceneData->CenterZ[ObjIdx] - Ray.Origin.z;
+
+                    const float tca = (dx * Ray.Direction.x) + (dy * Ray.Direction.y) + (dz * Ray.Direction.z);
+                    const float d2 = (dx * dx + dy * dy + dz * dz) - (tca * tca);
+                    const float r2 = SceneData->Radius[ObjIdx] * SceneData->Radius[ObjIdx];
+
+                    if (d2 > r2) continue;
+
+                    const float thc = std::sqrt(r2 - d2);
+                    const float t0 = tca - thc;
+                    const float t1 = tca + thc;
+
+                    if (t1 < 0.0f) continue;
+                    const float tNear = (t0 < 0.0f) ? t1 : t0;
+
+                    // 구체에 맞았고, 지금까지 찾은 거리보다 가깝다면 정밀 검사
+                    if (tNear < NearestT)
                     {
-                        if (HitDist < NearestT)
+                        float HitDist = NearestT;
+                        if (NarrowPhaseTest(ObjIdx, HitDist))
                         {
-                            NearestT = HitDist;
-                            OutHitIndex = ObjIdx;
-                            bHit = true;
+                            if (HitDist < NearestT)
+                            {
+                                NearestT = HitDist;
+                                OutHitIndex = ObjIdx;
+                                bHit = true;
+                            }
                         }
                     }
                 }
