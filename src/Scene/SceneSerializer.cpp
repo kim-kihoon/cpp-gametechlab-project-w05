@@ -76,6 +76,7 @@ namespace Scene
                 SceneData->MeshIDs[Index] = Index % 2;
                 SceneData->BaseMeshIDs[Index] = Index % 2;
                 SceneData->MaterialIDs[Index] = 0;
+                SceneData->LODLevels[Index] = static_cast<uint8_t>(ELODLevel::LOD0);
 
                 SceneData->IsVisible[Index] = true;
             }

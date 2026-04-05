@@ -14,11 +14,18 @@
 #include <sstream>
 #include <fstream>
 #include <chrono>
+#include <cmath>
+#include <system_error>
 
 namespace Graphics
 {
     namespace
     {
+        constexpr uint32_t MESH_CACHE_MAGIC = 0x48444F4Cu;
+        constexpr uint32_t MESH_CACHE_VERSION = 1;
+        constexpr float LOD1_SIMPLIFY_RATIO = 0.5f;
+        constexpr float LOD2_SIMPLIFY_RATIO = 0.2f;
+
         struct FPerFrameConstants
         {
             DirectX::XMFLOAT4X4 ViewProj;
@@ -63,6 +70,313 @@ namespace Graphics
                     ^ (std::hash<int>{}(k.NormalIndex) << 2);
             }
         };
+
+        struct FMeshCacheHeader
+        {
+            uint32_t Magic = MESH_CACHE_MAGIC;
+            uint32_t Version = MESH_CACHE_VERSION;
+            uint32_t VertexCount = 0;
+            uint32_t IndexCount = 0;
+            int64_t SourceWriteTime = 0;
+            uint64_t SourceFileSize = 0;
+        };
+
+        struct FClusterVertex
+        {
+            double PositionX = 0.0;
+            double PositionY = 0.0;
+            double PositionZ = 0.0;
+            double NormalX = 0.0;
+            double NormalY = 0.0;
+            double NormalZ = 0.0;
+            double TexCoordX = 0.0;
+            double TexCoordY = 0.0;
+            uint32_t SampleCount = 0;
+        };
+
+        std::wstring GetMeshCachePath(const std::wstring& SourcePath, Scene::ELODLevel LODLevel)
+        {
+            std::filesystem::path CacheDirectory = std::filesystem::path(Core::FPathManager::GetBinPath()) / L"MeshCache";
+            std::error_code EC;
+            std::filesystem::create_directories(CacheDirectory, EC);
+
+            std::filesystem::path SourceFileName(SourcePath);
+            std::wstring Suffix = (LODLevel == Scene::ELODLevel::LOD1) ? L".lod1.meshbin" : L".lod2.meshbin";
+            return (CacheDirectory / (SourceFileName.stem().wstring() + Suffix)).wstring();
+        }
+
+        bool ComputeSourceSignature(const std::wstring& SourcePath, int64_t& OutWriteTime, uint64_t& OutFileSize)
+        {
+            const std::filesystem::path SourceFilePath(SourcePath);
+            std::error_code EC;
+
+            const auto WriteTime = std::filesystem::last_write_time(SourceFilePath, EC);
+            if (EC) return false;
+            OutWriteTime = WriteTime.time_since_epoch().count();
+
+            OutFileSize = std::filesystem::file_size(SourceFilePath, EC);
+            return !EC;
+        }
+
+        void UpdateMeshBounds(URenderer::FMeshResource& Resource)
+        {
+            if (Resource.SourceVertices.empty())
+            {
+                Resource.LocalCenter = { 0.0f, 0.0f, 0.0f };
+                return;
+            }
+
+            float MinX = Resource.SourceVertices[0].Position.x;
+            float MinY = Resource.SourceVertices[0].Position.y;
+            float MinZ = Resource.SourceVertices[0].Position.z;
+            float MaxX = MinX;
+            float MaxY = MinY;
+            float MaxZ = MinZ;
+
+            for (const auto& Vertex : Resource.SourceVertices)
+            {
+                MinX = (std::min)(MinX, Vertex.Position.x);
+                MinY = (std::min)(MinY, Vertex.Position.y);
+                MinZ = (std::min)(MinZ, Vertex.Position.z);
+                MaxX = (std::max)(MaxX, Vertex.Position.x);
+                MaxY = (std::max)(MaxY, Vertex.Position.y);
+                MaxZ = (std::max)(MaxZ, Vertex.Position.z);
+            }
+
+            Resource.LocalCenter = {
+                (MinX + MaxX) * 0.5f,
+                (MinY + MaxY) * 0.5f,
+                (MinZ + MaxZ) * 0.5f
+            };
+        }
+
+        bool UploadMeshResource(ID3D11Device* Device, URenderer::FMeshResource& Resource)
+        {
+            if (Resource.SourceVertices.empty() || Resource.SourceIndices.empty()) return false;
+
+            UpdateMeshBounds(Resource);
+
+            D3D11_BUFFER_DESC VBDesc = {
+                static_cast<UINT>(Resource.SourceVertices.size() * sizeof(URenderer::FMeshVertex)),
+                D3D11_USAGE_DEFAULT,
+                D3D11_BIND_VERTEX_BUFFER,
+                0, 0, 0
+            };
+            D3D11_SUBRESOURCE_DATA VBData = { Resource.SourceVertices.data(), 0, 0 };
+            if (FAILED(Device->CreateBuffer(&VBDesc, &VBData, &Resource.VertexBuffer))) return false;
+
+            D3D11_BUFFER_DESC IBDesc = {
+                static_cast<UINT>(Resource.SourceIndices.size() * sizeof(uint32_t)),
+                D3D11_USAGE_DEFAULT,
+                D3D11_BIND_INDEX_BUFFER,
+                0, 0, 0
+            };
+            D3D11_SUBRESOURCE_DATA IBData = { Resource.SourceIndices.data(), 0, 0 };
+            if (FAILED(Device->CreateBuffer(&IBDesc, &IBData, &Resource.IndexBuffer))) return false;
+
+            Resource.IndexCount = static_cast<uint32_t>(Resource.SourceIndices.size());
+            return true;
+        }
+
+        bool TryLoadSimplifiedMeshCache(
+            const std::wstring& SourcePath,
+            const std::wstring& CachePath,
+            std::vector<URenderer::FMeshVertex>& OutVertices,
+            std::vector<uint32_t>& OutIndices)
+        {
+            int64_t SourceWriteTime = 0;
+            uint64_t SourceFileSize = 0;
+            if (!ComputeSourceSignature(SourcePath, SourceWriteTime, SourceFileSize)) return false;
+
+            std::ifstream File(CachePath, std::ios::binary);
+            if (!File) return false;
+
+            FMeshCacheHeader Header = {};
+            File.read(reinterpret_cast<char*>(&Header), sizeof(Header));
+            if (!File ||
+                Header.Magic != MESH_CACHE_MAGIC ||
+                Header.Version != MESH_CACHE_VERSION ||
+                Header.SourceWriteTime != SourceWriteTime ||
+                Header.SourceFileSize != SourceFileSize ||
+                Header.VertexCount == 0 ||
+                Header.IndexCount == 0 ||
+                (Header.IndexCount % 3) != 0)
+            {
+                return false;
+            }
+
+            OutVertices.resize(Header.VertexCount);
+            OutIndices.resize(Header.IndexCount);
+            File.read(reinterpret_cast<char*>(OutVertices.data()), sizeof(URenderer::FMeshVertex) * Header.VertexCount);
+            File.read(reinterpret_cast<char*>(OutIndices.data()), sizeof(uint32_t) * Header.IndexCount);
+            return File.good();
+        }
+
+        bool SaveSimplifiedMeshCache(
+            const std::wstring& SourcePath,
+            const std::wstring& CachePath,
+            const std::vector<URenderer::FMeshVertex>& Vertices,
+            const std::vector<uint32_t>& Indices)
+        {
+            int64_t SourceWriteTime = 0;
+            uint64_t SourceFileSize = 0;
+            if (!ComputeSourceSignature(SourcePath, SourceWriteTime, SourceFileSize)) return false;
+
+            std::ofstream File(CachePath, std::ios::binary);
+            if (!File) return false;
+
+            FMeshCacheHeader Header = {};
+            Header.VertexCount = static_cast<uint32_t>(Vertices.size());
+            Header.IndexCount = static_cast<uint32_t>(Indices.size());
+            Header.SourceWriteTime = SourceWriteTime;
+            Header.SourceFileSize = SourceFileSize;
+
+            File.write(reinterpret_cast<const char*>(&Header), sizeof(Header));
+            File.write(reinterpret_cast<const char*>(Vertices.data()), sizeof(URenderer::FMeshVertex) * Vertices.size());
+            File.write(reinterpret_cast<const char*>(Indices.data()), sizeof(uint32_t) * Indices.size());
+            return File.good();
+        }
+
+        bool BuildSimplifiedMeshData(
+            const URenderer::FMeshResource& SourceResource,
+            float TargetRatio,
+            std::vector<URenderer::FMeshVertex>& OutVertices,
+            std::vector<uint32_t>& OutIndices)
+        {
+            if (SourceResource.SourceVertices.empty() || SourceResource.SourceIndices.size() < 3) return false;
+
+            const auto& SourceVertices = SourceResource.SourceVertices;
+            const auto& SourceIndices = SourceResource.SourceIndices;
+            const size_t TargetVertexCount = (std::max)(static_cast<size_t>(4),
+                static_cast<size_t>(std::llround(static_cast<double>(SourceVertices.size()) * TargetRatio)));
+
+            float MinX = SourceVertices[0].Position.x;
+            float MinY = SourceVertices[0].Position.y;
+            float MinZ = SourceVertices[0].Position.z;
+            float MaxX = MinX;
+            float MaxY = MinY;
+            float MaxZ = MinZ;
+
+            for (const auto& Vertex : SourceVertices)
+            {
+                MinX = (std::min)(MinX, Vertex.Position.x);
+                MinY = (std::min)(MinY, Vertex.Position.y);
+                MinZ = (std::min)(MinZ, Vertex.Position.z);
+                MaxX = (std::max)(MaxX, Vertex.Position.x);
+                MaxY = (std::max)(MaxY, Vertex.Position.y);
+                MaxZ = (std::max)(MaxZ, Vertex.Position.z);
+            }
+
+            const float ExtentX = (std::max)(MaxX - MinX, 0.0001f);
+            const float ExtentY = (std::max)(MaxY - MinY, 0.0001f);
+            const float ExtentZ = (std::max)(MaxZ - MinZ, 0.0001f);
+            const float MaxExtent = (std::max)(ExtentX, (std::max)(ExtentY, ExtentZ));
+            const uint32_t BaseResolution = (std::max)(1u, static_cast<uint32_t>(std::round(std::cbrt(static_cast<double>(TargetVertexCount)))));
+            const uint32_t GridX = (std::max)(1u, static_cast<uint32_t>(std::round((ExtentX / MaxExtent) * BaseResolution)));
+            const uint32_t GridY = (std::max)(1u, static_cast<uint32_t>(std::round((ExtentY / MaxExtent) * BaseResolution)));
+            const uint32_t GridZ = (std::max)(1u, static_cast<uint32_t>(std::round((ExtentZ / MaxExtent) * BaseResolution)));
+
+            std::unordered_map<uint64_t, uint32_t> ClusterMap;
+            std::vector<FClusterVertex> Clusters;
+            std::vector<uint32_t> VertexRemap(SourceVertices.size(), 0);
+            Clusters.reserve(TargetVertexCount);
+            ClusterMap.reserve(TargetVertexCount);
+
+            const auto QuantizeAxis = [](float Value, float MinValue, float Extent, uint32_t GridCount) -> uint32_t
+            {
+                if (GridCount <= 1) return 0;
+                const float Normalized = std::clamp((Value - MinValue) / Extent, 0.0f, 0.999999f);
+                return static_cast<uint32_t>(Normalized * static_cast<float>(GridCount));
+            };
+
+            for (size_t VertexIndex = 0; VertexIndex < SourceVertices.size(); ++VertexIndex)
+            {
+                const auto& Vertex = SourceVertices[VertexIndex];
+                const uint32_t QX = QuantizeAxis(Vertex.Position.x, MinX, ExtentX, GridX);
+                const uint32_t QY = QuantizeAxis(Vertex.Position.y, MinY, ExtentY, GridY);
+                const uint32_t QZ = QuantizeAxis(Vertex.Position.z, MinZ, ExtentZ, GridZ);
+                const uint64_t Key =
+                    (static_cast<uint64_t>(QX) << 42) |
+                    (static_cast<uint64_t>(QY) << 21) |
+                    static_cast<uint64_t>(QZ);
+
+                auto It = ClusterMap.find(Key);
+                uint32_t ClusterIndex = 0;
+                if (It == ClusterMap.end())
+                {
+                    ClusterIndex = static_cast<uint32_t>(Clusters.size());
+                    ClusterMap.emplace(Key, ClusterIndex);
+                    Clusters.emplace_back();
+                }
+                else
+                {
+                    ClusterIndex = It->second;
+                }
+
+                auto& Cluster = Clusters[ClusterIndex];
+                Cluster.PositionX += Vertex.Position.x;
+                Cluster.PositionY += Vertex.Position.y;
+                Cluster.PositionZ += Vertex.Position.z;
+                Cluster.NormalX += Vertex.Normal.x;
+                Cluster.NormalY += Vertex.Normal.y;
+                Cluster.NormalZ += Vertex.Normal.z;
+                Cluster.TexCoordX += Vertex.TexCoord.x;
+                Cluster.TexCoordY += Vertex.TexCoord.y;
+                Cluster.SampleCount += 1;
+                VertexRemap[VertexIndex] = ClusterIndex;
+            }
+
+            OutVertices.clear();
+            OutIndices.clear();
+            OutVertices.resize(Clusters.size());
+
+            for (size_t ClusterIndex = 0; ClusterIndex < Clusters.size(); ++ClusterIndex)
+            {
+                const auto& Cluster = Clusters[ClusterIndex];
+                auto& Vertex = OutVertices[ClusterIndex];
+                const float InvCount = 1.0f / static_cast<float>((std::max)(Cluster.SampleCount, 1u));
+
+                Vertex.Position = {
+                    static_cast<float>(Cluster.PositionX * InvCount),
+                    static_cast<float>(Cluster.PositionY * InvCount),
+                    static_cast<float>(Cluster.PositionZ * InvCount)
+                };
+
+                DirectX::XMVECTOR Normal = DirectX::XMVectorSet(
+                    static_cast<float>(Cluster.NormalX),
+                    static_cast<float>(Cluster.NormalY),
+                    static_cast<float>(Cluster.NormalZ),
+                    0.0f);
+                Normal = DirectX::XMVector3Normalize(Normal);
+                DirectX::XMStoreFloat3(&Vertex.Normal, Normal);
+
+                Vertex.TexCoord = {
+                    static_cast<float>(Cluster.TexCoordX * InvCount),
+                    static_cast<float>(Cluster.TexCoordY * InvCount)
+                };
+            }
+
+            OutIndices.reserve(SourceIndices.size());
+            for (size_t TriangleIndex = 0; TriangleIndex + 2 < SourceIndices.size(); TriangleIndex += 3)
+            {
+                const uint32_t A = VertexRemap[SourceIndices[TriangleIndex]];
+                const uint32_t B = VertexRemap[SourceIndices[TriangleIndex + 1]];
+                const uint32_t C = VertexRemap[SourceIndices[TriangleIndex + 2]];
+                if (A == B || B == C || A == C) continue;
+
+                OutIndices.push_back(A);
+                OutIndices.push_back(B);
+                OutIndices.push_back(C);
+            }
+
+            if (OutVertices.size() < 4 || OutIndices.size() < 3)
+            {
+                OutVertices = SourceVertices;
+                OutIndices = SourceIndices;
+            }
+
+            return true;
+        }
 
         bool ParseObjFaceIndices(const std::string& tok, int& p, int& t, int& n)
         {
@@ -224,27 +538,35 @@ namespace Graphics
             URenderer::FMeshResource& res)
         {
             if (!LoadObjMeshData(path, res.SourceVertices, res.SourceIndices, res.DiffuseTexturePath)) return false;
-
-            float minX = 1e9f, minY = 1e9f, minZ = 1e9f;
-            float maxX = -1e9f, maxY = -1e9f, maxZ = -1e9f;
-            for (const auto& v : res.SourceVertices)
-            {
-                minX = (std::min)(minX, v.Position.x); minY = (std::min)(minY, v.Position.y); minZ = (std::min)(minZ, v.Position.z);
-                maxX = (std::max)(maxX, v.Position.x); maxY = (std::max)(maxY, v.Position.y); maxZ = (std::max)(maxZ, v.Position.z);
-            }
-            res.LocalCenter = { (minX + maxX) * 0.5f, (minY + maxY) * 0.5f, (minZ + maxZ) * 0.5f };
-
-            D3D11_BUFFER_DESC vb = { (UINT)(res.SourceVertices.size() * sizeof(URenderer::FMeshVertex)), D3D11_USAGE_DEFAULT, D3D11_BIND_VERTEX_BUFFER, 0, 0, 0 };
-            D3D11_SUBRESOURCE_DATA vd = { res.SourceVertices.data(), 0, 0 };
-            dev->CreateBuffer(&vb, &vd, &res.VertexBuffer);
-
-            D3D11_BUFFER_DESC ib = { (UINT)(res.SourceIndices.size() * sizeof(uint32_t)), D3D11_USAGE_DEFAULT, D3D11_BIND_INDEX_BUFFER, 0, 0, 0 };
-            D3D11_SUBRESOURCE_DATA id = { res.SourceIndices.data(), 0, 0 };
-            dev->CreateBuffer(&ib, &id, &res.IndexBuffer);
-
+            if (!UploadMeshResource(dev, res)) return false;
             LoadTextureWithWIC(dev, res.DiffuseTexturePath, res.DiffuseTextureView);
-            res.IndexCount = (uint32_t)res.SourceIndices.size();
             return true;
+        }
+
+        bool LoadSimplifiedMeshResource(
+            ID3D11Device* Device,
+            const std::wstring& SourcePath,
+            const URenderer::FMeshResource& SourceResource,
+            Scene::ELODLevel LODLevel,
+            float TargetRatio,
+            URenderer::FMeshResource& OutResource)
+        {
+            OutResource = {};
+            OutResource.DiffuseTexturePath = SourceResource.DiffuseTexturePath;
+            OutResource.DiffuseTextureView = SourceResource.DiffuseTextureView;
+
+            const std::wstring CachePath = GetMeshCachePath(SourcePath, LODLevel);
+            if (!TryLoadSimplifiedMeshCache(SourcePath, CachePath, OutResource.SourceVertices, OutResource.SourceIndices))
+            {
+                if (!BuildSimplifiedMeshData(SourceResource, TargetRatio, OutResource.SourceVertices, OutResource.SourceIndices))
+                {
+                    return false;
+                }
+
+                SaveSimplifiedMeshCache(SourcePath, CachePath, OutResource.SourceVertices, OutResource.SourceIndices);
+            }
+
+            return UploadMeshResource(Device, OutResource);
         }
     } // anonymous namespace
 
@@ -398,13 +720,18 @@ namespace Graphics
     // ============================================================================
     const URenderer::FMeshResource* URenderer::GetMeshResource(uint32_t MeshID) const
     {
+        if (MeshID < TOTAL_MESH_RESOURCE_COUNT)
+        {
+            MeshID %= BASE_MESH_TYPES;
+        }
+
         if (MeshID >= BILLBOARD_MESH_ID_OFFSET &&
-            MeshID < BILLBOARD_MESH_ID_OFFSET + MAX_MESH_TYPES)
+            MeshID < BILLBOARD_MESH_ID_OFFSET + BASE_MESH_TYPES)
         {
             MeshID -= BILLBOARD_MESH_ID_OFFSET;
         }
 
-        if (MeshID < MAX_MESH_TYPES) return &MeshResources[MeshID];
+        if (MeshID < BASE_MESH_TYPES) return &MeshResources[MeshID];
         return nullptr;
     }
 
@@ -523,10 +850,30 @@ namespace Graphics
 
         // ── Mesh Resources ────────────────────────────────────────────────────────
         const std::wstring MeshBasePath = Core::FPathManager::GetMeshPath();
-        if (!LoadMeshResource(Device.Get(), MeshBasePath + L"apple_mid.obj", MeshResources[0])) return false;
-        if (!LoadMeshResource(Device.Get(), MeshBasePath + L"bitten_apple_mid.obj", MeshResources[1])) return false;
-        if (!MeshResources[0].DiffuseTextureView) MeshResources[0].DiffuseTextureView = DefaultWhiteTextureView;
-        if (!MeshResources[1].DiffuseTextureView) MeshResources[1].DiffuseTextureView = DefaultWhiteTextureView;
+        const std::array<std::wstring, BASE_MESH_TYPES> SourceMeshPaths = {
+            MeshBasePath + L"apple_mid.obj",
+            MeshBasePath + L"bitten_apple_mid.obj"
+        };
+
+        for (uint32_t BaseMeshID = 0; BaseMeshID < BASE_MESH_TYPES; ++BaseMeshID)
+        {
+            FMeshResource& LOD0Resource = MeshResources[Scene::EncodeRenderMeshID(BaseMeshID, Scene::ELODLevel::LOD0)];
+            if (!LoadMeshResource(Device.Get(), SourceMeshPaths[BaseMeshID], LOD0Resource)) return false;
+            if (!LOD0Resource.DiffuseTextureView) LOD0Resource.DiffuseTextureView = DefaultWhiteTextureView;
+        }
+
+        for (uint32_t BaseMeshID = 0; BaseMeshID < BASE_MESH_TYPES; ++BaseMeshID)
+        {
+            const FMeshResource& SourceResource = MeshResources[Scene::EncodeRenderMeshID(BaseMeshID, Scene::ELODLevel::LOD0)];
+            FMeshResource& LOD1Resource = MeshResources[Scene::EncodeRenderMeshID(BaseMeshID, Scene::ELODLevel::LOD1)];
+            FMeshResource& LOD2Resource = MeshResources[Scene::EncodeRenderMeshID(BaseMeshID, Scene::ELODLevel::LOD2)];
+
+            if (!LoadSimplifiedMeshResource(Device.Get(), SourceMeshPaths[BaseMeshID], SourceResource, Scene::ELODLevel::LOD1, LOD1_SIMPLIFY_RATIO, LOD1Resource)) return false;
+            if (!LoadSimplifiedMeshResource(Device.Get(), SourceMeshPaths[BaseMeshID], SourceResource, Scene::ELODLevel::LOD2, LOD2_SIMPLIFY_RATIO, LOD2Resource)) return false;
+
+            if (!LOD1Resource.DiffuseTextureView) LOD1Resource.DiffuseTextureView = SourceResource.DiffuseTextureView;
+            if (!LOD2Resource.DiffuseTextureView) LOD2Resource.DiffuseTextureView = SourceResource.DiffuseTextureView;
+        }
 
         // ── Billboard Shader ──────────────────────────────────────────────────────
         const char* BBShader = R"(
@@ -1295,7 +1642,7 @@ namespace Graphics
             {
                 const uint32_t oid = PrevVisibleQueue[i];
                 const uint32_t mid = SceneData->MeshIDs[oid];
-                if (mid >= MAX_MESH_TYPES) continue;
+                if (mid >= TOTAL_MESH_RESOURCE_COUNT) continue;
                 const FMeshResource& res = MeshResources[mid];
                 if (!res.VertexBuffer || !res.IndexBuffer) continue;
 
@@ -1361,16 +1708,16 @@ namespace Graphics
 
         auto GetRenderBucketIndex = [&](uint32_t MeshID, uint32_t& OutBucketIndex) -> bool
         {
-            if (MeshID < MAX_MESH_TYPES)
+            if (MeshID < TOTAL_MESH_RESOURCE_COUNT)
             {
                 OutBucketIndex = MeshID;
                 return true;
             }
 
             if (MeshID >= BILLBOARD_MESH_ID_OFFSET &&
-                MeshID < BILLBOARD_MESH_ID_OFFSET + MAX_MESH_TYPES)
+                MeshID < BILLBOARD_MESH_ID_OFFSET + BASE_MESH_TYPES)
             {
-                OutBucketIndex = MAX_MESH_TYPES + (MeshID - BILLBOARD_MESH_ID_OFFSET);
+                OutBucketIndex = TOTAL_MESH_RESOURCE_COUNT + (MeshID - BILLBOARD_MESH_ID_OFFSET);
                 return true;
             }
 
@@ -1420,7 +1767,7 @@ namespace Graphics
         PerObjectRingBufferOffset += FinalBulk;
 
         // 메시별 배치 드로우
-        for (uint32_t mid = 0; mid < MAX_MESH_TYPES; ++mid)
+        for (uint32_t mid = 0; mid < TOTAL_MESH_RESOURCE_COUNT; ++mid)
         {
             if (MeshCounts[mid] == 0) continue;
             const FMeshResource& res = MeshResources[mid];
@@ -1465,10 +1812,10 @@ namespace Graphics
         Context->VSSetShader(BillboardVS.Get(), nullptr, 0);
         Context->PSSetShader(BillboardPS.Get(), nullptr, 0);
 
-        for (uint32_t mid = 0; mid < MAX_MESH_TYPES; ++mid)
+        for (uint32_t mid = 0; mid < BASE_MESH_TYPES; ++mid)
         {
             if (!ImpostorResources[mid].bIsBaked) continue;
-            const uint32_t BucketIndex = MAX_MESH_TYPES + mid;
+            const uint32_t BucketIndex = TOTAL_MESH_RESOURCE_COUNT + mid;
             if (MeshCounts[BucketIndex] == 0) continue;
 
             Context->PSSetShaderResources(0, 1, ImpostorResources[mid].SnapshotSRV.GetAddressOf());

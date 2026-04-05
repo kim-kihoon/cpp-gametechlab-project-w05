@@ -89,9 +89,10 @@ namespace Graphics
             std::array<bool, Scene::FSceneDataSOA::MAX_OBJECTS>& OutIsVisible);
 
     private:
-        static constexpr uint32_t MAX_MESH_TYPES = 2;
-        static constexpr uint32_t BILLBOARD_MESH_ID_OFFSET = 10;
-        static constexpr uint32_t RENDER_BUCKET_COUNT = MAX_MESH_TYPES * 2;
+        static constexpr uint32_t BASE_MESH_TYPES = Scene::BASE_MESH_TYPE_COUNT;
+        static constexpr uint32_t TOTAL_MESH_RESOURCE_COUNT = Scene::TOTAL_MESH_RESOURCE_COUNT;
+        static constexpr uint32_t BILLBOARD_MESH_ID_OFFSET = Scene::BILLBOARD_MESH_ID_OFFSET;
+        static constexpr uint32_t RENDER_BUCKET_COUNT = TOTAL_MESH_RESOURCE_COUNT + BASE_MESH_TYPES;
 
         ComPtr<ID3D11Device> Device;
         ComPtr<ID3D11DeviceContext> Context;
@@ -118,8 +119,8 @@ namespace Graphics
         ComPtr<ID3D11RasterizerState> DefaultRasterizerState;
         ComPtr<ID3D11DepthStencilState> DefaultDepthStencilState;
 
-        std::array<FMeshResource, MAX_MESH_TYPES> MeshResources = {};
-        std::array<FImpostorResource, MAX_MESH_TYPES> ImpostorResources = {};
+        std::array<FMeshResource, TOTAL_MESH_RESOURCE_COUNT> MeshResources = {};
+        std::array<FImpostorResource, BASE_MESH_TYPES> ImpostorResources = {};
         uint32_t ViewportWidth = 0;
         uint32_t ViewportHeight = 0;
         uint32_t PerObjectRingBufferOffset = 0;

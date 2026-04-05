@@ -1,5 +1,6 @@
 ﻿#pragma once
 #include <Math/MathTypes.h>
+#include <Scene/SceneTypes.h>
 #include <array>
 #include <malloc.h>
 
@@ -30,6 +31,7 @@ namespace Scene
         alignas(64) std::array<uint32_t, MAX_OBJECTS> MeshIDs;
         alignas(64) std::array<uint32_t, MAX_OBJECTS> BaseMeshIDs;
         alignas(64) std::array<uint32_t, MAX_OBJECTS> MaterialIDs;
+        alignas(64) std::array<uint8_t, MAX_OBJECTS> LODLevels;
         alignas(64) std::array<bool, MAX_OBJECTS> IsVisible;
 
         // Render Queue
@@ -41,6 +43,7 @@ namespace Scene
         void operator delete(void* p) { _aligned_free(p); }
 
         FSceneDataSOA() : RenderCount(0) {
+            LODLevels.fill(static_cast<uint8_t>(ELODLevel::LOD0));
             IsVisible.fill(false);
         }
 

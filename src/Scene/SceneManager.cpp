@@ -10,18 +10,21 @@ namespace Scene
     {
         // 사과의 기본 반경 (필요 시 메시 데이터로부터 자동 계산하도록 확장 가능)
         constexpr float DEFAULT_HALF_EXTENT = 0.5f;
-        constexpr uint32_t MAX_BASE_MESH_TYPES = 2;
-        constexpr uint32_t BILLBOARD_MESH_ID_OFFSET = 10;
 
         uint32_t NormalizeBaseMeshID(uint32_t InMeshID)
         {
             if (InMeshID >= BILLBOARD_MESH_ID_OFFSET &&
-                InMeshID < BILLBOARD_MESH_ID_OFFSET + MAX_BASE_MESH_TYPES)
+                InMeshID < BILLBOARD_MESH_ID_OFFSET + BASE_MESH_TYPE_COUNT)
             {
                 InMeshID -= BILLBOARD_MESH_ID_OFFSET;
             }
 
-            return (InMeshID < MAX_BASE_MESH_TYPES) ? InMeshID : 0u;
+            if (InMeshID >= TOTAL_MESH_RESOURCE_COUNT)
+            {
+                return 0u;
+            }
+
+            return InMeshID % BASE_MESH_TYPE_COUNT;
         }
     }
 
@@ -50,6 +53,7 @@ namespace Scene
 
 		SceneData->TotalObjectCount = 0;
 		SceneData->ResetRenderQueue();
+		SceneData->LODLevels.fill(static_cast<uint8_t>(ELODLevel::LOD0));
 		SceneData->IsVisible.fill(false);
 		ResetSelectionState();
     }
@@ -80,6 +84,7 @@ namespace Scene
         SceneData->MeshIDs[ObjectIndex] = InRequest.MeshID;
         SceneData->BaseMeshIDs[ObjectIndex] = InRequest.MeshID;
         SceneData->MaterialIDs[ObjectIndex] = InRequest.MaterialID;
+        SceneData->LODLevels[ObjectIndex] = static_cast<uint8_t>(ELODLevel::LOD0);
         SceneData->IsVisible[ObjectIndex] = true;
 
         SceneData->TotalObjectCount++;
@@ -181,6 +186,7 @@ namespace Scene
             const uint32_t BaseMeshID = NormalizeBaseMeshID(SceneData->MeshIDs[ObjectIndex]);
             SceneData->MeshIDs[ObjectIndex] = BaseMeshID;
             SceneData->BaseMeshIDs[ObjectIndex] = BaseMeshID;
+            SceneData->LODLevels[ObjectIndex] = static_cast<uint8_t>(ELODLevel::LOD0);
         }
 
         SceneData->TotalObjectCount = Count;
@@ -194,7 +200,7 @@ namespace Scene
 
         SelectionData.bHasSelection = true;
         SelectionData.ObjectIndex = InObjectIndex;
-        SelectionData.MeshID = SceneData->MeshIDs[InObjectIndex];
+        SelectionData.MeshID = SceneData->BaseMeshIDs[InObjectIndex];
         SelectionData.MaterialID = SceneData->MaterialIDs[InObjectIndex];
         return true;
     }

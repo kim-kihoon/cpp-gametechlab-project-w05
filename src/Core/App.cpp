@@ -298,8 +298,13 @@ void UApp::UniformCullingAndRenderCollect()
         Math::FFrustum CameraFrustum;
         CameraFrustum.Update(View, Proj);
 
-        // 최적화된 AVX2 컬링 및 LOD(MeshID) 빌드 함수 호출
-        SceneManager->GetGrid()->CullingAndBuildRenderQueue(CameraFrustum, DirectX::XMLoadFloat3(&CameraState.Position));
+        Scene::FLODSelectionContext LODContext = {};
+        LODContext.CameraPosition = CameraState.Position;
+        LODContext.ViewportHeight = static_cast<float>((std::max)(ScreenHeight, 1));
+        LODContext.TanHalfFovY = std::tan(DirectX::XMConvertToRadians(CameraState.FOVDegrees) * 0.5f);
+
+        // 최적화된 컬링 및 LOD 빌드 함수 호출
+        SceneManager->GetGrid()->CullingAndBuildRenderQueue(CameraFrustum, LODContext);
     }
 }
 
