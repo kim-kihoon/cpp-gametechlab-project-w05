@@ -10,6 +10,7 @@ namespace Scene
     {
         constexpr float MIN_CELL_SIZE = 2.0f;
         constexpr float MAX_CELL_SIZE = 8.0f;
+        // constexpr float CELL_SIZE_MULTIPLIER = 2.0f;
         constexpr float CELL_SIZE_MULTIPLIER = 4.0f;
         constexpr float MIN_DISTANCE_EPSILON = 0.001f;
 
@@ -405,13 +406,11 @@ namespace Scene
                             const uint32_t Index = Indices[i];
                             if (VisitTokens[Index] == CurrentVisitToken) continue;
 
-                            if (Frustum.TestBox(
-                                SceneData->MinX[Index],
-                                SceneData->MinY[Index],
-                                SceneData->MinZ[Index],
-                                SceneData->MaxX[Index],
-                                SceneData->MaxY[Index],
-                                SceneData->MaxZ[Index]) == Math::ECullingResult::Outside)
+                            if (Frustum.TestSphere(
+                                SceneData->CenterX[Index],
+                                SceneData->CenterY[Index],
+                                SceneData->CenterZ[Index],
+                                SceneData->Radius[Index]) == Math::ECullingResult::Outside)
                             {
                                 continue;
                             }

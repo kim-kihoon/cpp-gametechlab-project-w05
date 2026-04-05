@@ -3,9 +3,40 @@
 #include <cstdint>
 #include <DirectXMath.h>
 
+#include <vector>
+#include <functional>
+
+namespace Math { struct FFrustum; }
+
 namespace Scene
 {
+    struct FSceneDataSOA;
     using namespace Math;
+
+    typedef std::function<bool(uint32_t, float&)> NarrowPhaseFunc;
+
+    struct FSceneBVHNode
+    {
+        Math::FBox Bounds;
+        uint32_t LeftChild = 0;
+        uint32_t RightChild = 0;
+        uint32_t ObjectIndex = 0;
+        uint32_t ObjectCount = 0;
+
+        bool IsLeaf() const { return ObjectCount > 0; }
+    };
+
+    struct FSceneBVH
+    {
+        std::vector<FSceneBVHNode> Nodes;
+        std::vector<uint32_t> ObjectIndices;
+
+        const struct FSceneDataSOA* SceneData = nullptr;
+
+        void Build(const struct FSceneDataSOA& SceneData);
+        void QueryFrustum(const Math::FFrustum& Frustum, uint32_t* OutObjectIndices, uint32_t& OutCount, uint32_t MaxCount) const;
+        bool Raycast(const Math::FRay& Ray, float MaxDistance, uint32_t& OutHitIndex, float& OutHitDistance, NarrowPhaseFunc NarrowPhaseTest) const;
+    };
 
     enum class ELODLevel : uint8_t
     {
@@ -56,6 +87,9 @@ namespace Scene
         FMatrix WorldMatrix = DirectX::XMMatrixIdentity();
         uint32_t MeshID = 0;
         uint32_t MaterialID = 0;
+
+        float LocalRadius = 0.5f;
+        Math::FBox LocalAABB = {};
     };
 
     /**
@@ -69,6 +103,9 @@ namespace Scene
         float Spacing = 100.0f;
         uint32_t MeshID = 0;
         uint32_t MaterialID = 0;
+
+        float LocalRadius = 0.5f;
+        Math::FBox LocalAABB = {};
     };
 
     /**

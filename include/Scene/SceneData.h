@@ -24,6 +24,12 @@ namespace Scene
         alignas(64) std::array<float, MAX_OBJECTS> MaxY;
         alignas(64) std::array<float, MAX_OBJECTS> MaxZ;
 
+        // Bounding Sphere의 연산 효율을 사용하기 위한 x, y, z, radius 추가.
+        alignas(64) std::array<float, MAX_OBJECTS> CenterX;
+        alignas(64) std::array<float, MAX_OBJECTS> CenterY;
+        alignas(64) std::array<float, MAX_OBJECTS> CenterZ;
+        alignas(64) std::array<float, MAX_OBJECTS> Radius;
+
         // [Render Hot Path] 압축된 3x4 행렬 사용
         alignas(64) std::array<FPacked3x4Matrix, MAX_OBJECTS> WorldMatrices;
         

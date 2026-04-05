@@ -7,6 +7,7 @@
 
 #include "Renderer.h"
 
+using Microsoft::WRL::ComPtr;
 namespace Graphics
 {
     struct FDebugVertex

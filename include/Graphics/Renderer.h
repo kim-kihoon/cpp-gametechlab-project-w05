@@ -1,6 +1,7 @@
 ﻿#pragma once
 #include <Graphics/RendererTypes.h>
 #include <Graphics/HUD.h>
+#include <Graphics/DebugLine.h> // 추가: DebugLine.h
 #include <Core/AppTypes.h>
 #include <DirectXMath.h>
 #include <array>
@@ -9,8 +10,10 @@
 #include <string>
 #include <vector>
 #include <wrl/client.h>
+#include "Math/MathTypes.h"
 #include "Scene/SceneData.h"
 
+class UDebugRenderer;
 namespace Scene { class USceneManager; }
 
 namespace Graphics
@@ -20,12 +23,28 @@ namespace Graphics
     class URenderer
     {
     public:
-        // ... (FMeshVertex, FMeshResource 등 기존 구조체 생략은 replace에서 위험하므로 전체 포함)
         struct FMeshVertex
         {
             DirectX::XMFLOAT3 Position;
             DirectX::XMFLOAT3 Normal;
             DirectX::XMFLOAT2 TexCoord;
+        };
+
+        struct FBVHNode
+        {
+            Math::FBox Bounds;
+            uint32_t LeftChild = 0;
+            uint32_t RightChild = 0;
+            uint32_t TriangleIndex = 0;
+            uint32_t TriangleCount = 0;
+
+            bool IsLeaf() const { return TriangleCount > 0; }
+        };
+
+        struct FBVH
+        {
+            std::vector<FBVHNode> Nodes;
+            std::vector<uint32_t> TriangleIndices; // Indices of triangles (first vertex in SourceIndices)
         };
 
         struct FBillboardVertex
@@ -51,6 +70,13 @@ namespace Graphics
             std::wstring DiffuseTexturePath;
             uint32_t IndexCount = 0;
             uint32_t ObjectCount = 0;
+            FBVH MeshBVH;
+
+            Math::FBox LocalAABB;
+            float LocalRadius = 0.0f;
+
+            void BuildBVH();
+            bool Raycast(const Math::FRay& LocalRay, float& OutT) const;
             DirectX::XMFLOAT3 LocalCenter = { 0, 0, 0 };
         };
 
@@ -81,6 +107,8 @@ namespace Graphics
 
     private:
         bool CreateDefaultResources();
+        void DrawDebugBVH(const Scene::USceneManager& InSceneManager); // 추가: BVH AABB 디버그 드로우 함수
+        void DrawDebugGrid(const Scene::USceneManager& InSceneManager); // 추가: Uniform Grid 디버그 드로우 함수
 
         void InitHiZResources(uint32_t Width, uint32_t Height);  // 추가
         void BuildHiZMips();                                      // 추가
@@ -129,6 +157,8 @@ namespace Graphics
         FDebugRenderSettings DebugSettings;
         Core::FFramePerformanceMetrics CurrentMetrics; // 추가: HUD에 전달할 데이터
         std::unique_ptr<FHUD> HUD; // 추가: HUD 객체
+
+        std::unique_ptr<UDebugRenderer> DebugRenderer; // 추가: 디버그 렌더러
 
         ComPtr<ID3D11ShaderResourceView> DepthCopySRV;
         // Hi-Z Occlusion Culling

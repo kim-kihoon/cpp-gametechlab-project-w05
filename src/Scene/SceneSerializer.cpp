@@ -85,6 +85,7 @@ namespace Scene
             {
                 Grid->BuildGrid();
             }
+            // InSceneManager.BuildSceneBVH();
         }
 
         return File.good();

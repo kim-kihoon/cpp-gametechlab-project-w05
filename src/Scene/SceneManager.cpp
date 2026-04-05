@@ -47,6 +47,60 @@ namespace Scene
         // 여기서는 매 프레임 루프를 도는 행위를 금지함.
     }
 
+    void USceneManager::BuildSceneBVH()
+    {
+        if (SceneData) SceneBVH.Build(*SceneData);
+    }
+
+    Core::ESpatialStructure USceneManager::DetermineOptimalStructure() const
+    {
+        if (!SceneData || SceneData->TotalObjectCount == 0)
+            return Core::ESpatialStructure::SceneBVH;
+
+        float SceneMinX = (std::numeric_limits<float>::max)();
+        float SceneMinY = (std::numeric_limits<float>::max)();
+        float SceneMinZ = (std::numeric_limits<float>::max)();
+        float SceneMaxX = std::numeric_limits<float>::lowest();
+        float SceneMaxY = std::numeric_limits<float>::lowest();
+        float SceneMaxZ = std::numeric_limits<float>::lowest();
+
+        float MaxObjectExtent = 0.0f;
+        float TotalObjectVolume = 0.0f;
+
+        for (uint32_t i = 0; i < SceneData->TotalObjectCount; ++i)
+        {
+            SceneMinX = (std::min)(SceneMinX, SceneData->MinX[i]);
+            SceneMinY = (std::min)(SceneMinY, SceneData->MinY[i]);
+            SceneMinZ = (std::min)(SceneMinZ, SceneData->MinZ[i]);
+            SceneMaxX = (std::max)(SceneMaxX, SceneData->MaxX[i]);
+            SceneMaxY = (std::max)(SceneMaxY, SceneData->MaxY[i]);
+            SceneMaxZ = (std::max)(SceneMaxZ, SceneData->MaxZ[i]);
+
+            float ExtentX = SceneData->MaxX[i] - SceneData->MinX[i];
+            float ExtentY = SceneData->MaxY[i] - SceneData->MinY[i];
+            float ExtentZ = SceneData->MaxZ[i] - SceneData->MinZ[i];
+            MaxObjectExtent = (std::max)({ MaxObjectExtent, ExtentX, ExtentY, ExtentZ });
+            TotalObjectVolume += (ExtentX * ExtentY * ExtentZ);
+        }
+
+        float SceneSizeX = SceneMaxX - SceneMinX;
+        float SceneSizeY = SceneMaxY - SceneMinY;
+        float SceneSizeZ = SceneMaxZ - SceneMinZ;
+
+        // 크기 편차
+        float MaxSceneExtent = (std::max)({ SceneSizeX, SceneSizeY, SceneSizeZ });
+        if (MaxObjectExtent > MaxSceneExtent * 0.1f) { return Core::ESpatialStructure::SceneBVH; }
+
+        float SceneVolume = SceneSizeX * SceneSizeY * SceneSizeZ;
+        float VolumePerObject = SceneVolume / static_cast<float>(SceneData->TotalObjectCount);
+        float AverageObjectVolume = TotalObjectVolume / static_cast<float>(SceneData->TotalObjectCount);
+
+        float SparsityRatio = (AverageObjectVolume > 0.0001f) ? (VolumePerObject / AverageObjectVolume) : 1000.0f;
+        if (VolumePerObject > 30.0f) { return Core::ESpatialStructure::SceneBVH; }
+
+        return Core::ESpatialStructure::UniformGrid;
+    }
+
 	void USceneManager::ResetScene()
     {
 		if (!SceneData) return;
@@ -56,6 +110,8 @@ namespace Scene
 		SceneData->LODLevels.fill(static_cast<uint8_t>(ELODLevel::LOD0));
 		SceneData->IsVisible.fill(false);
 		ResetSelectionState();
+        if (Grid) Grid->BuildGrid();
+        BuildSceneBVH();
     }
 
     bool USceneManager::SpawnStaticMesh(const FSceneSpawnRequest& InRequest, bool bRebuildGrid)
@@ -72,6 +128,18 @@ namespace Scene
         const float CX = DirectX::XMVectorGetX(Translation);
         const float CY = DirectX::XMVectorGetY(Translation);
         const float CZ = DirectX::XMVectorGetZ(Translation);
+
+        DirectX::XMVECTOR Scale, Rot, Trans;
+        DirectX::XMMatrixDecompose(&Scale, &Rot, &Trans, InRequest.WorldMatrix);
+        float MaxScale = std::max({ DirectX::XMVectorGetX(Scale), DirectX::XMVectorGetY(Scale), DirectX::XMVectorGetZ(Scale) });
+
+        float LocalRadius = 0.5f;
+        float WorldRadius = LocalRadius * MaxScale;
+
+        SceneData->CenterX[ObjectIndex] = CX;
+        SceneData->CenterY[ObjectIndex] = CY;
+        SceneData->CenterZ[ObjectIndex] = CZ;
+        SceneData->Radius[ObjectIndex] = WorldRadius;
 
         SceneData->MinX[ObjectIndex] = CX - DEFAULT_HALF_EXTENT;
         SceneData->MinY[ObjectIndex] = CY - DEFAULT_HALF_EXTENT;
@@ -90,8 +158,11 @@ namespace Scene
         SceneData->TotalObjectCount++;
 
         // 4. 그리드 삽입
-		if (bRebuildGrid && Grid) { Grid->BuildGrid(); }
-
+		if (bRebuildGrid) 
+		{ 
+		    if (Grid) Grid->BuildGrid(); 
+		    BuildSceneBVH();       
+		}
         return true;
     }
 
@@ -116,7 +187,8 @@ namespace Scene
                 }
             }
         }
-        if (Grid) Grid->BuildGrid();
+        if (Grid) Grid->BuildGrid(); 
+        BuildSceneBVH();    
     }
 
     bool USceneManager::EnsureObjectCount(uint32_t InObjectCount)
@@ -150,6 +222,10 @@ namespace Scene
         File.write(reinterpret_cast<const char*>(SceneData->MaxX.data()), sizeof(float) * Count);
         File.write(reinterpret_cast<const char*>(SceneData->MaxY.data()), sizeof(float) * Count);
         File.write(reinterpret_cast<const char*>(SceneData->MaxZ.data()), sizeof(float) * Count);
+        File.write(reinterpret_cast<const char*>(SceneData->CenterX.data()), sizeof(float) * Count);
+        File.write(reinterpret_cast<const char*>(SceneData->CenterY.data()), sizeof(float) * Count);
+        File.write(reinterpret_cast<const char*>(SceneData->CenterZ.data()), sizeof(float) * Count);
+        File.write(reinterpret_cast<const char*>(SceneData->Radius.data()), sizeof(float) * Count);
         File.write(reinterpret_cast<const char*>(SceneData->WorldMatrices.data()), sizeof(FPacked3x4Matrix) * Count);
         File.write(reinterpret_cast<const char*>(SceneData->BaseMeshIDs.data()), sizeof(uint32_t) * Count);
         File.write(reinterpret_cast<const char*>(SceneData->MaterialIDs.data()), sizeof(uint32_t) * Count);
@@ -177,6 +253,10 @@ namespace Scene
         File.read(reinterpret_cast<char*>(SceneData->MaxX.data()), sizeof(float) * Count);
         File.read(reinterpret_cast<char*>(SceneData->MaxY.data()), sizeof(float) * Count);
         File.read(reinterpret_cast<char*>(SceneData->MaxZ.data()), sizeof(float) * Count);
+        File.read(reinterpret_cast<char*>(SceneData->CenterX.data()), sizeof(float) * Count);
+        File.read(reinterpret_cast<char*>(SceneData->CenterY.data()), sizeof(float) * Count);
+        File.read(reinterpret_cast<char*>(SceneData->CenterZ.data()), sizeof(float) * Count);
+        File.read(reinterpret_cast<char*>(SceneData->Radius.data()), sizeof(float) * Count);
         File.read(reinterpret_cast<char*>(SceneData->WorldMatrices.data()), sizeof(FPacked3x4Matrix) * Count);
         File.read(reinterpret_cast<char*>(SceneData->MeshIDs.data()), sizeof(uint32_t) * Count);
         File.read(reinterpret_cast<char*>(SceneData->MaterialIDs.data()), sizeof(uint32_t) * Count);
@@ -191,7 +271,86 @@ namespace Scene
 
         SceneData->TotalObjectCount = Count;
         if (Grid) Grid->BuildGrid();
+        BuildSceneBVH();
         return File.good();
+    }
+
+    bool USceneManager::AddObject(const Math::FBox& InBounds, const Math::FMatrix& InWorldMatrix, uint32_t InMeshID, uint32_t InMaterialID)
+    {
+        if (!SceneData || SceneData->TotalObjectCount >= FSceneDataSOA::MAX_OBJECTS) return false;
+
+        const uint32_t ObjectIndex = SceneData->TotalObjectCount;
+        SceneData->MinX[ObjectIndex] = InBounds.Min.x;
+        SceneData->MinY[ObjectIndex] = InBounds.Min.y;
+        SceneData->MinZ[ObjectIndex] = InBounds.Min.z;
+        SceneData->MaxX[ObjectIndex] = InBounds.Max.x;
+        SceneData->MaxY[ObjectIndex] = InBounds.Max.y;
+        SceneData->MaxZ[ObjectIndex] = InBounds.Max.z;
+
+        const float CX = (InBounds.Max.x + InBounds.Min.x) * 0.5f;
+        const float CY = (InBounds.Max.y + InBounds.Min.y) * 0.5f;
+        const float CZ = (InBounds.Max.z + InBounds.Min.z) * 0.5f;
+
+        const float ExtentX = (InBounds.Max.x - InBounds.Min.x) * 0.5f;
+        const float ExtentY = (InBounds.Max.y - InBounds.Min.y) * 0.5f;
+        const float ExtentZ = (InBounds.Max.z - InBounds.Min.z) * 0.5f;
+
+        // 피타고라스의 정리로 박스를 감싸는 구의 반지름 계산
+        const float Radius = std::sqrt((ExtentX * ExtentX) + (ExtentY * ExtentY) + (ExtentZ * ExtentZ));
+
+        SceneData->CenterX[ObjectIndex] = CX;
+        SceneData->CenterY[ObjectIndex] = CY;
+        SceneData->CenterZ[ObjectIndex] = CZ;
+        SceneData->Radius[ObjectIndex] = Radius;
+
+        SceneData->WorldMatrices[ObjectIndex].Store(InWorldMatrix);
+        SceneData->MeshIDs[ObjectIndex] = InMeshID;
+        SceneData->MaterialIDs[ObjectIndex] = InMaterialID;
+        SceneData->IsVisible[ObjectIndex] = true;
+
+        SceneData->TotalObjectCount++;
+        if (Grid) Grid->BuildGrid();
+        BuildSceneBVH();
+        return true;
+    }
+
+    bool USceneManager::AddObjectPacked(const Math::FBox& InBounds, const Math::FPacked3x4Matrix& InWorldMatrix, uint32_t InMeshID, uint32_t InMaterialID)
+    {
+        if (!SceneData || SceneData->TotalObjectCount >= FSceneDataSOA::MAX_OBJECTS) return false;
+
+        const uint32_t ObjectIndex = SceneData->TotalObjectCount;
+        SceneData->MinX[ObjectIndex] = InBounds.Min.x;
+        SceneData->MinY[ObjectIndex] = InBounds.Min.y;
+        SceneData->MinZ[ObjectIndex] = InBounds.Min.z;
+        SceneData->MaxX[ObjectIndex] = InBounds.Max.x;
+        SceneData->MaxY[ObjectIndex] = InBounds.Max.y;
+        SceneData->MaxZ[ObjectIndex] = InBounds.Max.z;
+
+        const float CX = (InBounds.Max.x + InBounds.Min.x) * 0.5f;
+        const float CY = (InBounds.Max.y + InBounds.Min.y) * 0.5f;
+        const float CZ = (InBounds.Max.z + InBounds.Min.z) * 0.5f;
+
+        const float ExtentX = (InBounds.Max.x - InBounds.Min.x) * 0.5f;
+        const float ExtentY = (InBounds.Max.y - InBounds.Min.y) * 0.5f;
+        const float ExtentZ = (InBounds.Max.z - InBounds.Min.z) * 0.5f;
+
+        // 피타고라스의 정리로 박스를 감싸는 구의 반지름 계산
+        const float Radius = std::sqrt((ExtentX * ExtentX) + (ExtentY * ExtentY) + (ExtentZ * ExtentZ));
+
+        SceneData->CenterX[ObjectIndex] = CX;
+        SceneData->CenterY[ObjectIndex] = CY;
+        SceneData->CenterZ[ObjectIndex] = CZ;
+        SceneData->Radius[ObjectIndex] = Radius;
+
+        SceneData->WorldMatrices[ObjectIndex] = InWorldMatrix;
+        SceneData->MeshIDs[ObjectIndex] = InMeshID;
+        SceneData->MaterialIDs[ObjectIndex] = InMaterialID;
+        SceneData->IsVisible[ObjectIndex] = true;
+
+        SceneData->TotalObjectCount++;
+        if (Grid) Grid->BuildGrid();
+        BuildSceneBVH();
+        return true;
     }
 
     bool USceneManager::SelectObject(uint32_t InObjectIndex)

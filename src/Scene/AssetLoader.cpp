@@ -1,4 +1,4 @@
-#include <Scene/AssetLoader.h>
+﻿#include <Scene/AssetLoader.h>
 #include <Core/PathManager.h>
 #include <Scene/SceneManager.h>
 #include <DirectXMath.h>
@@ -132,6 +132,7 @@ namespace Scene
         }
 
 		if (InSceneManager.GetGrid()) { InSceneManager.GetGrid()->BuildGrid(); }
+		InSceneManager.BuildSceneBVH();
 
         return InSceneManager.GetSceneStatistics().TotalObjectCount > 0;
     }
